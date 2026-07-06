@@ -495,9 +495,9 @@ export default function DocumentEditor() {
             {canPlaceMarkers && (
               <div className="space-y-3">
                 {[
-                  { type: 'signature' as const, label: 'Signature', sub: 'Click to sign', icon: '📝' },
-                  { type: 'initials' as const, label: 'Initials', sub: 'Small signature', icon: '✍️' },
-                  { type: 'date' as const, label: 'Date Signed', sub: 'Auto-filled date', icon: '📅' },
+                  { type: 'signature' as const, label: 'Signature', sub: 'Click to sign', icon: '' },
+                  { type: 'initials' as const, label: 'Initials', sub: 'Small signature', icon: '' },
+                  { type: 'date' as const, label: 'Date Signed', sub: 'Auto-filled date', icon: '' },
                   { type: 'text' as const, label: 'Text Input', sub: 'Custom text field', icon: 'Tt' },
                 ].map(field => (
                   <button
