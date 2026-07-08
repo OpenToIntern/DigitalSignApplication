@@ -33,6 +33,7 @@ export default function DocumentEditor() {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
+  const [zoomScale, setZoomScale] = useState(1.2)
 
   const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
     setPdfDimensions({ width: info.width, height: info.height })
@@ -52,9 +53,13 @@ export default function DocumentEditor() {
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
+    const scaleFactor = zoomScale / 1.2
+    const visualX = marker.x * scaleFactor
+    const visualY = marker.y * scaleFactor
+
     setDragOffset({
-      x: clickX - marker.x,
-      y: clickY - marker.y,
+      x: clickX - visualX,
+      y: clickY - visualY,
     })
   }
 
@@ -65,16 +70,23 @@ export default function DocumentEditor() {
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
-    let newX = clickX - dragOffset.x
-    let newY = clickY - dragOffset.y
+    let newVisualX = clickX - dragOffset.x
+    let newVisualY = clickY - dragOffset.y
     
     const marker = markers.find(m => m.id === draggingId)
     if (!marker) return
     
-    newX = Math.max(0, Math.min(rect.width - marker.width, newX))
-    newY = Math.max(0, Math.min(rect.height - marker.height, newY))
+    const scaleFactor = zoomScale / 1.2
+    const visualWidth = marker.width * scaleFactor
+    const visualHeight = marker.height * scaleFactor
+
+    newVisualX = Math.max(0, Math.min(rect.width - visualWidth, newVisualX))
+    newVisualY = Math.max(0, Math.min(rect.height - visualHeight, newVisualY))
     
-    const updated = markers.map(m => m.id === draggingId ? { ...m, x: newX, y: newY } : m)
+    const baseNewX = newVisualX / scaleFactor
+    const baseNewY = newVisualY / scaleFactor
+
+    const updated = markers.map(m => m.id === draggingId ? { ...m, x: baseNewX, y: baseNewY } : m)
     setMarkers(updated)
   }
 
@@ -399,14 +411,13 @@ export default function DocumentEditor() {
 
       <div className="flex flex-1 h-[calc(100vh-7rem)] overflow-hidden">
         {/* Editor Main Canvas */}
-        <div className="flex-1 flex flex-col bg-surface-container-low overflow-y-auto p-8 relative items-center justify-center bg-confetti-gradient">
+        <div className="flex-1 flex flex-col bg-surface-container-low overflow-auto p-8 relative items-center justify-start bg-confetti-gradient">
           
           {/* Main White Page Canvas */}
           <div 
             className="relative bg-white text-slate-900 border border-outline-variant/80 rounded-lg shadow-md overflow-hidden flex flex-col select-none"
             style={{ 
               width: pdfDimensions ? `${pdfDimensions.width}px` : '100%',
-              maxWidth: '100%',
               height: pdfDimensions ? `${pdfDimensions.height}px` : '560px'
             }}
           >
@@ -428,7 +439,7 @@ export default function DocumentEditor() {
                   url={doc.downloadUrl} 
                   page={activePage} 
                   onLoadSuccess={handlePdfLoadSuccess}
-                  scale={1.2}
+                  scale={zoomScale}
                 />
               ) : (
                 renderDocumentMockup()
@@ -441,6 +452,12 @@ export default function DocumentEditor() {
                   ((canSupervisorSign && marker.assignedTo.accessRole === 'supervisor') ||
                    (canManagerSign && marker.assignedTo.accessRole === 'manager'))
 
+                const scaleFactor = zoomScale / 1.2
+                const visualX = marker.x * scaleFactor
+                const visualY = marker.y * scaleFactor
+                const visualWidth = marker.width * scaleFactor
+                const visualHeight = marker.height * scaleFactor
+
                 return (
                   <div
                     key={marker.id}
@@ -448,10 +465,10 @@ export default function DocumentEditor() {
                     onClick={() => handleMarkerClick(marker)}
                     style={{
                       position: 'absolute',
-                      left: `${marker.x}px`,
-                      top: `${marker.y}px`,
-                      width: `${marker.width}px`,
-                      height: `${marker.height}px`,
+                      left: `${visualX}px`,
+                      top: `${visualY}px`,
+                      width: `${visualWidth}px`,
+                      height: `${visualHeight}px`,
                       cursor: canPlaceMarkers ? 'move' : 'pointer',
                     }}
                     className={`rounded-lg border shadow-sm flex items-center justify-between px-3 py-1 cursor-pointer transition-all select-none
@@ -492,11 +509,23 @@ export default function DocumentEditor() {
           </div>
 
           {/* Bottom Zoom/Undo Page Controls Bar */}
-          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant">
+          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant z-10 flex-shrink-0">
             <div className="flex items-center gap-3">
-              <button className="p-1 hover:bg-surface-container rounded"><ZoomOut size={14} /></button>
-              <span className="font-semibold font-mono">100%</span>
-              <button className="p-1 hover:bg-surface-container rounded"><ZoomIn size={14} /></button>
+              <button 
+                onClick={() => setZoomScale(z => Math.max(0.6, z - 0.15))}
+                className="p-1 hover:bg-surface-container rounded"
+              >
+                <ZoomOut size={14} />
+              </button>
+              <span className="font-semibold font-mono w-10 text-center">
+                {Math.round((zoomScale / 1.2) * 100)}%
+              </span>
+              <button 
+                onClick={() => setZoomScale(z => Math.min(2.5, z + 0.15))}
+                className="p-1 hover:bg-surface-container rounded"
+              >
+                <ZoomIn size={14} />
+              </button>
             </div>
             <div className="w-px h-4 bg-outline-variant" />
             <div className="flex items-center gap-3">
@@ -504,7 +533,25 @@ export default function DocumentEditor() {
               <button className="p-1 hover:bg-surface-container rounded" title="Redo"><RotateCw size={14} /></button>
             </div>
             <div className="w-px h-4 bg-outline-variant" />
-            <span className="font-semibold font-mono">Page 1 of {doc.pageCount || 1}</span>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setActivePage(p => Math.max(1, p - 1))}
+                disabled={activePage === 1}
+                className="p-1 hover:bg-surface-container rounded disabled:opacity-30"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="font-semibold font-mono">
+                Page {activePage} of {doc.pageCount || 1}
+              </span>
+              <button 
+                onClick={() => setActivePage(p => Math.min(doc.pageCount || 1, p + 1))}
+                disabled={activePage === (doc.pageCount || 1)}
+                className="p-1 hover:bg-surface-container rounded disabled:opacity-30"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
         </div>
 

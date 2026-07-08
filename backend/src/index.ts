@@ -24,9 +24,10 @@ app.use(express.json({ limit: '10mb' }));
 // Seed mock users into the database
 async function seedMockUsers() {
   const mockUsers = [
-    { id: 'usr-001', name: 'Jessy Harya', email: 'jessy@example.com', accessRole: 'user' },
-    { id: 'usr-002', name: 'Ricky Wong', email: 'ricky@example.com', accessRole: 'supervisor' },
-    { id: 'usr-003', name: 'Fred Johnson', email: 'fred@example.com', accessRole: 'manager' }
+    { id: 'u-001', name: 'Richie Frederico Wong', email: 'richie.wong@companyx.com', accessRole: 'user' },
+    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'inria.kalalo@companyx.com', accessRole: 'supervisor' },
+    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jesynta.harya@companyx.com', accessRole: 'manager' },
+    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', accessRole: 'user' }
   ];
 
   for (const user of mockUsers) {
