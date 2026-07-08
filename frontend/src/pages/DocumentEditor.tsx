@@ -7,6 +7,7 @@ import {
 import AppLayout from '../components/AppLayout'
 import SignatureModal from '../components/SignatureModal'
 import InviteModal from '../components/InviteModal'
+import PDFViewer from '../components/PDFViewer'
 import { useApp } from '../context/AppContext'
 import type { Document, Marker, User, SignatureData } from '../types'
 import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
@@ -31,6 +32,14 @@ export default function DocumentEditor() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
+  const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
+
+  const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
+    setPdfDimensions({ width: info.width, height: info.height })
+    if (doc && doc.pageCount !== info.pageCount) {
+      updateDocument(doc.id, { pageCount: info.pageCount })
+    }
+  }
 
   const handleMouseDown = (marker: Marker, e: React.MouseEvent) => {
     if (!canPlaceMarkers) return
@@ -393,17 +402,37 @@ export default function DocumentEditor() {
         <div className="flex-1 flex flex-col bg-surface-container-low overflow-y-auto p-8 relative items-center justify-center bg-confetti-gradient">
           
           {/* Main White Page Canvas */}
-          <div className="relative w-full max-w-2xl bg-white text-slate-900 border border-outline-variant/80 rounded-lg overflow-hidden flex flex-col shadow-md" style={{ height: '560px' }}>
-            
-            {/* Agreement contents mockup */}
+          <div 
+            className="relative bg-white text-slate-900 border border-outline-variant/80 rounded-lg shadow-md overflow-hidden flex flex-col select-none"
+            style={{ 
+              width: pdfDimensions ? `${pdfDimensions.width}px` : '100%',
+              maxWidth: '100%',
+              height: pdfDimensions ? `${pdfDimensions.height}px` : '560px'
+            }}
+          >
+            {/* Agreement contents / Real PDF page */}
             <div
               ref={containerRef}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              className="flex-1 p-10 relative overflow-hidden bg-white select-none"
+              className="flex-1 relative overflow-hidden bg-white"
+              style={{
+                width: '100%',
+                height: '100%',
+                padding: doc.downloadUrl ? '0' : '2.5rem'
+              }}
             >
-              {renderDocumentMockup()}
+              {doc.downloadUrl ? (
+                <PDFViewer 
+                  url={doc.downloadUrl} 
+                  page={activePage} 
+                  onLoadSuccess={handlePdfLoadSuccess}
+                  scale={1.2}
+                />
+              ) : (
+                renderDocumentMockup()
+              )}
 
               {/* Render Dragged / Placed Node Markers */}
               {markers.filter(m => m.page === activePage).map(marker => {

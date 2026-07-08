@@ -1,0 +1,65 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id         String     @id @default(uuid())
+  email      String     @unique
+  name       String
+  accessRole String     // 'user', 'supervisor', 'manager'
+  documents  Document[] @relation("SenderRelation")
+  markers    Marker[]   @relation("AssignedRelation")
+  auditLogs  AuditLog[]
+}
+
+model Document {
+  id           String     @id
+  name         String
+  category     String
+  size         String
+  status       String     // 'draft', 'pending_supervisor', 'pending_manager', 'locked', 'rejected'
+  senderId     String
+  sender       User       @relation("SenderRelation", fields: [senderId], references: [id])
+  fileKey      String     // MinIO object key
+  uploadedAt   DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  baselineHash String
+  pageCount    Int        @default(1)
+  markers      Marker[]
+  auditLogs    AuditLog[]
+}
+
+model Marker {
+  id           String    @id
+  documentId   String
+  document     Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  x            Float
+  y            Float
+  width        Float
+  height       Float
+  page         Int
+  type         String    // 'signature', 'date', 'text'
+  assignedToId String
+  assignedTo   User      @relation("AssignedRelation", fields: [assignedToId], references: [id])
+  signed       Boolean   @default(false)
+  signedAt     DateTime?
+  signature    String?   // DataURL of the signature image
+  metadata     Json?     // Cryptographic verification logs/details
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  event      String   // e.g. DOCUMENT_CREATED, SIGNATURE_MARKERS_PLACED, etc.
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  timestamp  DateTime @default(now())
+  ip         String
+  metadata   Json?
+}

@@ -23,7 +23,7 @@ function StatusBadge({ status }: { status: Document['status'] }) {
 }
 
 export default function Dashboard() {
-  const { documents, currentUser, addDocument } = useApp()
+  const { documents, currentUser, addDocument, refreshDocuments } = useApp()
   const [showUpload, setShowUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'signed' | 'pending'>('all')
   const navigate = useNavigate()
@@ -44,25 +44,30 @@ export default function Dashboard() {
     { label: 'Avg. Completion Time', value: '4.2h', icon: <Clock size={18} className="text-primary" />, sub: 'turnaround' },
   ]
 
-  const handleUpload = (file: File) => {
-    const newDoc: Document = {
-      id: `doc-${Date.now()}`,
-      name: file.name,
-      category: 'General',
-      size: `${(file.size / 1024).toFixed(0)} KB`,
-      status: 'draft',
-      sender: currentUser!,
-      recipients: [SUPERVISOR_USER, MANAGER_USER],
-      uploadedAt: new Date(),
-      updatedAt: new Date(),
-      baselineHash: Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-      pageCount: 1,
-      markers: [],
-      auditLog: [],
+  const handleUpload = async (file: File) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('category', 'General')
+      formData.append('senderId', currentUser?.id || 'usr-001')
+
+      const res = await fetch('http://localhost:5000/api/documents/upload', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!res.ok) throw new Error('Upload failed')
+      const uploadedDocRaw = await res.json()
+
+      // Refresh documents list
+      await refreshDocuments()
+
+      setShowUpload(false)
+      navigate(`/documents/${uploadedDocRaw.id}/editor`)
+    } catch (err) {
+      console.error('Failed to upload document to backend:', err)
+      alert('Error uploading file to server. Make sure the backend server is running.')
     }
-    addDocument(newDoc)
-    setShowUpload(false)
-    navigate(`/documents/${newDoc.id}/editor`)
   }
 
   return (
