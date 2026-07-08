@@ -8,6 +8,7 @@ import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, minioCl
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const prisma = new PrismaClient();
 
@@ -145,7 +146,7 @@ app.get('/api/documents', async (req: Request, res: Response) => {
 
     // Generate dynamic streaming URLs relative to the host
     const docsWithUrls = docs.map((doc) => {
-      const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/file`;
+      const fileUrl = `/api/documents/${doc.id}/file`;
       return { ...doc, fileUrl };
     });
 
@@ -201,7 +202,7 @@ app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> 
       return res.status(404).json({ error: 'Document not found.' });
     }
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/file`;
+    const fileUrl = `/api/documents/${doc.id}/file`;
     res.json({ ...doc, fileUrl });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -308,7 +309,7 @@ app.put('/api/documents/:id', async (req: Request, res: Response) => {
       }
     });
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${finalDoc!.id}/file`;
+    const fileUrl = `/api/documents/${finalDoc!.id}/file`;
     res.json({ ...finalDoc, fileUrl });
   } catch (error: any) {
     console.error('Update Document Error:', error);

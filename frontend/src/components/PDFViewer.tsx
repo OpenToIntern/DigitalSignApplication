@@ -36,15 +36,25 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
       });
   }, [url]);
 
+  const renderTaskRef = useRef<any>(null);
+
   // Render specific page when PDF or page number changes
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
     setLoading(true);
 
+    let activeRenderTask: any = null;
+
     pdf.getPage(page)
       .then((pdfPage: any) => {
+        if (!canvasRef.current) return;
         const canvas = canvasRef.current!;
         const context = canvas.getContext('2d')!;
+
+        // Cancel previous render task
+        if (renderTaskRef.current) {
+          renderTaskRef.current.cancel();
+        }
 
         // Get viewport with desired scale
         const viewport = pdfPage.getViewport({ scale });
@@ -57,7 +67,13 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
         };
 
         const renderTask = pdfPage.render(renderContext);
-        renderTask.promise.then(() => {
+        renderTaskRef.current = renderTask;
+        activeRenderTask = renderTask;
+
+        return renderTask.promise.then(() => {
+          if (renderTaskRef.current === activeRenderTask) {
+            renderTaskRef.current = null;
+          }
           setLoading(false);
           if (onLoadSuccess) {
             onLoadSuccess({
@@ -69,10 +85,20 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
         });
       })
       .catch((err: any) => {
+        if (err && err.name === 'RenderingCancelledException') {
+          // Silent ignore for cancelled renders
+          return;
+        }
         console.error('Error rendering page:', err);
         setError('Error rendering page.');
         setLoading(false);
       });
+
+    return () => {
+      if (activeRenderTask) {
+        activeRenderTask.cancel();
+      }
+    };
   }, [pdf, page, scale]);
 
   return (

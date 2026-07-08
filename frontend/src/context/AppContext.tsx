@@ -21,6 +21,16 @@ interface AppContextValue extends AppState {
 const AppContext = createContext<AppContextValue | null>(null)
 
 function mapApiDocToFrontendDoc(doc: any): Document {
+  let downloadUrl = doc.fileUrl || '';
+  if (downloadUrl.startsWith('/')) {
+    try {
+      const backendOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+      downloadUrl = `${backendOrigin}${downloadUrl}`;
+    } catch (e) {
+      console.error('Failed to construct backend origin for file download:', e);
+    }
+  }
+
   return {
     id: doc.id,
     name: doc.name,
@@ -33,7 +43,7 @@ function mapApiDocToFrontendDoc(doc: any): Document {
     updatedAt: doc.updatedAt,
     baselineHash: doc.baselineHash,
     pageCount: doc.pageCount,
-    downloadUrl: doc.fileUrl || '',
+    downloadUrl: downloadUrl,
     markers: (doc.markers || []).map((m: any) => ({
       id: m.id,
       x: m.x,
