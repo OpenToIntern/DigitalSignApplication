@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { PrismaClient } from '@prisma/client';
-import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl } from './minioClient';
+import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, getDocumentStream } from './minioClient';
 
 dotenv.config();
 
@@ -143,16 +143,11 @@ app.get('/api/documents', async (req: Request, res: Response) => {
       }
     });
 
-    // Generate transient presigned URL for each document
-    const docsWithUrls = await Promise.all(docs.map(async (doc) => {
-      let fileUrl = '';
-      try {
-        fileUrl = await getDocumentDownloadUrl(doc.fileKey);
-      } catch (err) {
-        console.error(`Failed to get presigned URL for document ${doc.id}:`, err);
-      }
+    // Generate dynamic streaming URLs relative to the host
+    const docsWithUrls = docs.map((doc) => {
+      const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/view`;
       return { ...doc, fileUrl };
-    }));
+    });
 
     res.json(docsWithUrls);
   } catch (error: any) {
@@ -160,7 +155,26 @@ app.get('/api/documents', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/documents/:id - get a single document details with its presigned download URL
+// GET /api/documents/:id/view - Streams document directly from MinIO (keeps MinIO private/hidden from frontend)
+app.get('/api/documents/:id/view', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const doc = await prisma.document.findUnique({ where: { id } });
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found.' });
+    }
+
+    const stream = await getDocumentStream(doc.fileKey);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name)}"`);
+    stream.pipe(res);
+  } catch (error: any) {
+    console.error('Error streaming document:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/documents/:id - get a single document details with its streaming URL
 app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
@@ -188,7 +202,7 @@ app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> 
       return res.status(404).json({ error: 'Document not found.' });
     }
 
-    const fileUrl = await getDocumentDownloadUrl(doc.fileKey);
+    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/view`;
     res.json({ ...doc, fileUrl });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -295,7 +309,7 @@ app.put('/api/documents/:id', async (req: Request, res: Response) => {
       }
     });
 
-    const fileUrl = await getDocumentDownloadUrl(finalDoc!.fileKey);
+    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${finalDoc!.id}/view`;
     res.json({ ...finalDoc, fileUrl });
   } catch (error: any) {
     console.error('Update Document Error:', error);
