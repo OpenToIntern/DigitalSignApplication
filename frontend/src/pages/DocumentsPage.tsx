@@ -46,7 +46,8 @@ export default function DocumentsPage() {
       formData.append('category', 'General')
       formData.append('senderId', currentUser?.id || 'usr-001')
 
-      const res = await fetch('http://localhost:5000/api/documents/upload', {
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+      const res = await fetch(`${apiBase}/documents/upload`, {
         method: 'POST',
         body: formData
       })
