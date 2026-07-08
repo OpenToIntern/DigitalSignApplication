@@ -81,15 +81,4 @@ export async function getDocumentDownloadUrl(fileKey: string): Promise<string> {
   });
 }
 
-// Get readable stream for backend proxying (keeps MinIO private)
-export async function getDocumentStream(fileKey: string): Promise<NodeJS.ReadableStream> {
-  return new Promise((resolve, reject) => {
-    minioClient.getObject(BUCKET_NAME, fileKey, (err, dataStream) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(dataStream);
-      }
-    });
-  });
-}
+

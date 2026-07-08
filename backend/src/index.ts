@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { PrismaClient } from '@prisma/client';
-import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, getDocumentStream } from './minioClient';
+import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, minioClient, BUCKET_NAME } from './minioClient';
 
 dotenv.config();
 
@@ -145,7 +145,7 @@ app.get('/api/documents', async (req: Request, res: Response) => {
 
     // Generate dynamic streaming URLs relative to the host
     const docsWithUrls = docs.map((doc) => {
-      const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/view`;
+      const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/file`;
       return { ...doc, fileUrl };
     });
 
@@ -155,19 +155,18 @@ app.get('/api/documents', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/documents/:id/view - Streams document directly from MinIO (keeps MinIO private/hidden from frontend)
-app.get('/api/documents/:id/view', async (req: Request, res: Response): Promise<any> => {
+// GET /api/documents/:id/file - Streams document directly from MinIO (keeps MinIO private/hidden from frontend)
+app.get('/api/documents/:id/file', async (req: Request, res: Response): Promise<any> => {
   try {
-    const { id } = req.params;
-    const doc = await prisma.document.findUnique({ where: { id } });
-    if (!doc) {
-      return res.status(404).json({ error: 'Document not found.' });
-    }
+    const doc = await prisma.document.findUnique({ where: { id: req.params.id } });
+    if (!doc) return res.status(404).json({ error: 'Not found' });
 
-    const stream = await getDocumentStream(doc.fileKey);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name)}"`);
-    stream.pipe(res);
+    minioClient.getObject(BUCKET_NAME, doc.fileKey, (err, stream) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch file' });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name)}"`);
+      stream.pipe(res);
+    });
   } catch (error: any) {
     console.error('Error streaming document:', error);
     res.status(500).json({ error: error.message });
@@ -202,7 +201,7 @@ app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> 
       return res.status(404).json({ error: 'Document not found.' });
     }
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/view`;
+    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${doc.id}/file`;
     res.json({ ...doc, fileUrl });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -309,7 +308,7 @@ app.put('/api/documents/:id', async (req: Request, res: Response) => {
       }
     });
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${finalDoc!.id}/view`;
+    const fileUrl = `${req.protocol}://${req.get('host')}/api/documents/${finalDoc!.id}/file`;
     res.json({ ...finalDoc, fileUrl });
   } catch (error: any) {
     console.error('Update Document Error:', error);
