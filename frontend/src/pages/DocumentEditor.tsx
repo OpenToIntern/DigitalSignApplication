@@ -28,12 +28,22 @@ export default function DocumentEditor() {
   // Assignee selector state
   const [assignedUser, setAssignedUser] = useState<User>(SUPERVISOR_USER)
 
-  // Dragging states
+  // Dragging and interactive states
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
   const [zoomScale, setZoomScale] = useState(1.2)
+
+  // Resizing states
+  const [resizingId, setResizingId] = useState<string | null>(null)
+  const [resizeStartDims, setResizeStartDims] = useState({ width: 0, height: 0 })
+  const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 })
+
+  // Panning/Scrolling states
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState({ scrollLeft: 0, scrollTop: 0, x: 0, y: 0 })
+  const viewportRef = useRef<HTMLDivElement>(null)
 
   const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
     setPdfDimensions({ width: info.width, height: info.height })
@@ -90,10 +100,130 @@ export default function DocumentEditor() {
     setMarkers(updated)
   }
 
+  const handleResizeMouseDown = (marker: Marker, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setResizingId(marker.id)
+    setResizeStartDims({ width: marker.width, height: marker.height })
+    setResizeStartPos({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleResizeMouseMove = (e: React.MouseEvent) => {
+    if (!resizingId) return
+    const marker = markers.find(m => m.id === resizingId)
+    if (!marker) return
+
+    const deltaX = e.clientX - resizeStartPos.x
+    const deltaY = e.clientY - resizeStartPos.y
+
+    const scaleFactor = zoomScale / 1.2
+    // Limit minimum marker size to 80x30 to keep visual markers clean
+    const newWidth = Math.max(80, resizeStartDims.width + (deltaX / scaleFactor))
+    const newHeight = Math.max(30, resizeStartDims.height + (deltaY / scaleFactor))
+
+    const updated = markers.map(m => m.id === resizingId ? { ...m, width: newWidth, height: newHeight } : m)
+    setMarkers(updated)
+  }
+
   const handleMouseUp = () => {
     if (draggingId && doc) {
       updateDocument(doc.id, { markers })
       setDraggingId(null)
+    }
+  }
+
+  const handleViewportMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement
+    // Avoid triggering panning when clicking nodes, buttons, dropdowns, etc.
+    if (target.closest('.node-marker-item') || target.closest('button') || target.closest('select') || target.closest('input')) {
+      return
+    }
+    if (e.button !== 0) return // Left click only
+    
+    setIsPanning(true)
+    if (viewportRef.current) {
+      setPanStart({
+        scrollLeft: viewportRef.current.scrollLeft,
+        scrollTop: viewportRef.current.scrollTop,
+        x: e.clientX,
+        y: e.clientY
+      })
+    }
+  }
+
+  const handleViewportMouseMove = (e: React.MouseEvent) => {
+    if (isPanning && viewportRef.current) {
+      const dx = e.clientX - panStart.x
+      const dy = e.clientY - panStart.y
+      viewportRef.current.scrollLeft = panStart.scrollLeft - dx
+      viewportRef.current.scrollTop = panStart.scrollTop - dy
+      return
+    }
+
+    if (resizingId) {
+      handleResizeMouseMove(e)
+      
+      // Auto edge scroll detection during resize
+      if (viewportRef.current) {
+        const viewport = viewportRef.current
+        const rect = viewport.getBoundingClientRect()
+        const relativeX = e.clientX - rect.left
+        const relativeY = e.clientY - rect.top
+        const scrollThreshold = 70
+        const scrollSpeed = 16
+        
+        if (relativeY < scrollThreshold) {
+          viewport.scrollTop -= scrollSpeed
+        } else if (relativeY > rect.height - scrollThreshold) {
+          viewport.scrollTop += scrollSpeed
+        }
+        if (relativeX < scrollThreshold) {
+          viewport.scrollLeft -= scrollSpeed
+        } else if (relativeX > rect.width - scrollThreshold) {
+          viewport.scrollLeft += scrollSpeed
+        }
+      }
+      return
+    }
+
+    if (draggingId) {
+      handleMouseMove(e)
+
+      // Auto edge scroll detection during drag
+      if (viewportRef.current) {
+        const viewport = viewportRef.current
+        const rect = viewport.getBoundingClientRect()
+        const relativeX = e.clientX - rect.left
+        const relativeY = e.clientY - rect.top
+        const scrollThreshold = 70
+        const scrollSpeed = 16
+        
+        if (relativeY < scrollThreshold) {
+          viewport.scrollTop -= scrollSpeed
+        } else if (relativeY > rect.height - scrollThreshold) {
+          viewport.scrollTop += scrollSpeed
+        }
+        if (relativeX < scrollThreshold) {
+          viewport.scrollLeft -= scrollSpeed
+        } else if (relativeX > rect.width - scrollThreshold) {
+          viewport.scrollLeft += scrollSpeed
+        }
+      }
+    }
+  }
+
+  const handleViewportMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false)
+    }
+    if (draggingId) {
+      handleMouseUp()
+    }
+    if (resizingId) {
+      if (doc) {
+        updateDocument(doc.id, { markers })
+      }
+      setResizingId(null)
     }
   }
 
@@ -411,7 +541,17 @@ export default function DocumentEditor() {
 
       <div className="flex flex-1 h-[calc(100vh-7rem)] overflow-hidden">
         {/* Editor Main Canvas */}
-        <div className="flex-1 flex flex-col bg-surface-container-low overflow-auto p-8 relative items-center justify-start bg-confetti-gradient">
+        <div 
+          ref={viewportRef}
+          onMouseDown={handleViewportMouseDown}
+          onMouseMove={handleViewportMouseMove}
+          onMouseUp={handleViewportMouseUp}
+          onMouseLeave={handleViewportMouseUp}
+          className="flex-1 flex flex-col bg-surface-container-low overflow-auto p-8 relative items-center justify-start bg-confetti-gradient"
+          style={{
+            cursor: isPanning ? 'grabbing' : draggingId ? 'move' : resizingId ? 'se-resize' : 'grab'
+          }}
+        >
           
           {/* Main White Page Canvas */}
           <div 
@@ -424,9 +564,6 @@ export default function DocumentEditor() {
             {/* Agreement contents / Real PDF page */}
             <div
               ref={containerRef}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
               className="flex-1 relative overflow-hidden bg-white"
               style={{
                 width: '100%',
@@ -471,7 +608,7 @@ export default function DocumentEditor() {
                       height: `${visualHeight}px`,
                       cursor: canPlaceMarkers ? 'move' : 'pointer',
                     }}
-                    className={`rounded-lg border shadow-sm flex items-center justify-between px-3 py-1 cursor-pointer transition-all select-none
+                    className={`node-marker-item rounded-lg border shadow-sm flex items-center justify-between cursor-pointer transition-all select-none overflow-hidden
                       ${marker.signed
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                         : isClickable
@@ -480,27 +617,60 @@ export default function DocumentEditor() {
                       }`}
                   >
                     {marker.signed ? (
-                      <div className="flex items-center gap-1.5 w-full">
-                        <img src={marker.signature} alt="Sig" className="max-h-8 max-w-[80px] object-contain" />
-                        <span className="text-[8px] font-mono text-emerald-600 block leading-tight">
-                          Signed<br/>✓ Secure
-                        </span>
+                      <div className="flex items-center justify-between w-full h-full p-1 gap-1.5 overflow-hidden">
+                        <img 
+                          src={marker.signature} 
+                          alt="Sig" 
+                          className="h-full w-auto max-w-[70%] object-contain flex-shrink-0"
+                          style={{ imageRendering: 'auto' }}
+                        />
+                        <div 
+                          className="flex flex-col justify-center leading-none text-emerald-600 flex-shrink-0"
+                          style={{ fontSize: `${Math.max(6, 8 * scaleFactor)}px` }}
+                        >
+                          <span className="font-bold">Signed</span>
+                          <span className="font-mono mt-0.5">✓ Secure</span>
+                        </div>
                       </div>
                     ) : (
-                      <>
+                      <div className="flex items-center justify-between w-full h-full px-3 py-1 gap-2">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-bold truncate capitalize">{marker.type}</p>
-                          <p className="text-[8px] text-on-surface-variant truncate">{marker.assignedTo.name.split(' ')[0]}</p>
+                          <p 
+                            className="font-bold truncate capitalize leading-tight"
+                            style={{ fontSize: `${Math.max(8, 10 * scaleFactor)}px` }}
+                          >
+                            {marker.type}
+                          </p>
+                          <p 
+                            className="text-on-surface-variant truncate leading-none mt-0.5"
+                            style={{ fontSize: `${Math.max(6, 8 * scaleFactor)}px` }}
+                          >
+                            {marker.assignedTo.name.split(' ')[0]}
+                          </p>
                         </div>
                         {canPlaceMarkers && (
                           <button
                             onClick={(e) => { e.stopPropagation(); deleteMarker(marker.id) }}
-                            className="p-0.5 text-on-surface-variant hover:text-error rounded hover:bg-surface-container"
+                            className="p-0.5 text-on-surface-variant hover:text-error rounded hover:bg-surface-container flex-shrink-0"
+                            style={{ fontSize: `${Math.max(10, 12 * scaleFactor)}px` }}
                           >
                             ×
                           </button>
                         )}
-                      </>
+                      </div>
+                    )}
+
+                    {/* Resize handle in the bottom-right corner */}
+                    {canPlaceMarkers && (
+                      <div
+                        onMouseDown={(e) => handleResizeMouseDown(marker, e)}
+                        className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize bg-primary hover:bg-primary/80 rounded-tl-lg flex items-center justify-center shadow-sm text-white select-none"
+                        style={{ zIndex: 10 }}
+                      >
+                        <svg width="6" height="6" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M6 0L0 6M6 3L3 6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                        </svg>
+                      </div>
                     )}
                   </div>
                 )

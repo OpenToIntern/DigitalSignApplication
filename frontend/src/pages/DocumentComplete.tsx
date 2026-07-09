@@ -278,17 +278,22 @@ export default function DocumentComplete() {
                     }}
                   >
                     {marker.signed ? (
-                      <div className="flex items-center gap-1.5 w-full">
+                      <div className="flex items-center justify-between w-full h-full p-1.5 gap-1.5 overflow-hidden">
                         {marker.signature ? (
-                          <img src={marker.signature} alt="Sig" className="max-h-8 max-w-[80px] object-contain" />
+                          <img 
+                            src={marker.signature} 
+                            alt="Sig" 
+                            className="h-full w-auto max-w-[70%] object-contain" 
+                          />
                         ) : (
                           <span className="text-[10px] font-bold text-stone-800 leading-tight font-mono">
                             {marker.assignedTo.initials}
                           </span>
                         )}
-                        <span className="text-[8px] font-mono text-emerald-600 block leading-tight font-extrabold">
-                          Signed<br/>✓ Secure
-                        </span>
+                        <div className="flex flex-col justify-center leading-none text-emerald-600 flex-shrink-0 text-[8px]">
+                          <span className="font-bold">Signed</span>
+                          <span className="font-mono mt-0.5">✓ Secure</span>
+                        </div>
                       </div>
                     ) : (
                       <div className="text-[9px] font-bold text-on-surface-variant flex flex-col items-center">
