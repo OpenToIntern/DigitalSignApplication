@@ -140,6 +140,7 @@ export default function DocumentEditor() {
     }
     if (e.button !== 0) return // Left click only
     
+    e.preventDefault() // Prevents text selection/image dragging from interrupting our scroll panning
     setIsPanning(true)
     if (viewportRef.current) {
       setPanStart({
