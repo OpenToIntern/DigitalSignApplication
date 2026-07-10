@@ -36,15 +36,56 @@ export default function SignatureModal({ onConfirm, onClose }: SignatureModalPro
     document.head.appendChild(link)
   }, [])
 
-  const getPos = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
-    const rect = canvas.getBoundingClientRect()
-    if ('touches' in e) {
-      return {
-        x: e.touches[0].clientX - rect.left,
-        y: e.touches[0].clientY - rect.top,
+  // Sync canvas pixel dimensions to its CSS-rendered size so drawn coords match
+  // what's actually captured in toDataURL(). Without this, a mismatch between
+  // the canvas `width` attribute and the displayed width shears/tilts the strokes.
+  useEffect(() => {
+    if (tab !== 'draw') return
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const syncSize = () => {
+      const rect = canvas.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      const dpr = window.devicePixelRatio || 1
+      const targetWidth = Math.round(rect.width * dpr)
+      const targetHeight = Math.round(rect.height * dpr)
+
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        // Save current canvas content to temporary canvas before resizing
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = canvas.width
+        tempCanvas.height = canvas.height
+        const tempCtx = tempCanvas.getContext('2d')
+        if (tempCtx && canvas.width > 0 && canvas.height > 0) {
+          tempCtx.drawImage(canvas, 0, 0)
+        }
+
+        canvas.width = targetWidth
+        canvas.height = targetHeight
+
+        // Restore saved content scaled to the new canvas size
+        const ctx = canvas.getContext('2d')
+        if (ctx && tempCanvas.width > 0 && tempCanvas.height > 0) {
+          ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, targetWidth, targetHeight)
+        }
       }
     }
-    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top }
+
+    syncSize()
+    const ro = new ResizeObserver(syncSize)
+    ro.observe(canvas)
+    return () => ro.disconnect()
+  }, [tab])
+
+  const getPos = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect()
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
+    return {
+      x: rect.width > 0 ? ((clientX - rect.left) / rect.width) * canvas.width : 0,
+      y: rect.height > 0 ? ((clientY - rect.top) / rect.height) * canvas.height : 0,
+    }
   }
 
   const startDraw = (e: React.MouseEvent | React.TouchEvent) => {
@@ -67,7 +108,9 @@ export default function SignatureModal({ onConfirm, onClose }: SignatureModalPro
     ctx.moveTo(lastPos.current.x, lastPos.current.y)
     ctx.lineTo(pos.x, pos.y)
     ctx.strokeStyle = '#1c1917' // Dark stone/ink signature line
-    ctx.lineWidth = 2.5
+    const rect = canvas.getBoundingClientRect()
+    const scale = rect.width > 0 ? canvas.width / rect.width : 1
+    ctx.lineWidth = 2.5 * scale
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.stroke()

@@ -5,6 +5,29 @@ import { CURRENT_USER } from '../constants/mockData'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+function normalizeUser(user: any): User {
+  const name = user?.name || user?.email?.split('@')[0] || 'Signer'
+  const initials = user?.initials || name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part: string) => part[0]?.toUpperCase())
+    .join('') || 'S'
+
+  return {
+    id: user?.id || `temp-${user?.email || Date.now()}`,
+    name,
+    email: user?.email || '',
+    initials,
+    nik: user?.nik || '',
+    verified: user?.verified ?? true,
+    avatarColor: user?.avatarColor || '#9a3412',
+    role: user?.role || (user?.accessRole === 'manager' ? 'Manager' : user?.accessRole === 'supervisor' ? 'Supervisor' : 'Signatory'),
+    accessRole: user?.accessRole || 'supervisor',
+    external: user?.external,
+  }
+}
+
 interface AppContextValue extends AppState {
   documents: Document[]
   loading: boolean
@@ -37,8 +60,12 @@ function mapApiDocToFrontendDoc(doc: any): Document {
     category: doc.category,
     size: doc.size,
     status: doc.status,
-    sender: doc.sender,
-    recipients: doc.recipients || [],
+    sender: normalizeUser(doc.sender),
+    recipients: doc.signatories
+      ? doc.signatories
+        .sort((a: any, b: any) => a.order - b.order)
+        .map((s: any) => normalizeUser(s.user))
+      : (doc.recipients || []).map(normalizeUser),
     uploadedAt: doc.uploadedAt,
     updatedAt: doc.updatedAt,
     baselineHash: doc.baselineHash,
@@ -52,7 +79,7 @@ function mapApiDocToFrontendDoc(doc: any): Document {
       height: m.height,
       page: m.page,
       type: m.type,
-      assignedTo: m.assignedTo,
+      assignedTo: normalizeUser(m.assignedTo),
       signed: m.signed,
       signedAt: m.signedAt,
       signature: m.signature || undefined,
@@ -61,7 +88,7 @@ function mapApiDocToFrontendDoc(doc: any): Document {
     auditLog: (doc.auditLogs || []).map((l: any) => ({
       id: l.id,
       event: l.event,
-      user: l.user,
+      user: l.user ? normalizeUser(l.user) : null,
       timestamp: l.timestamp,
       ip: l.ip,
       documentId: l.documentId,
@@ -110,6 +137,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const payload: any = {};
       if (updates.status !== undefined) payload.status = updates.status;
       if (updates.pageCount !== undefined) payload.pageCount = updates.pageCount;
+      if (updates.recipients !== undefined) {
+        payload.recipients = updates.recipients.map((r, index) => ({
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          accessRole: r.accessRole,
+          order: index + 1
+        }));
+      }
       
       if (updates.markers !== undefined) {
         payload.markers = updates.markers.map(m => ({

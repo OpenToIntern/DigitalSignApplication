@@ -56,14 +56,21 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
           renderTaskRef.current.cancel();
         }
 
-        // Get viewport with desired scale
+        // Render at device-pixel resolution while keeping CSS dimensions in PDF units.
+        // This keeps text, page edges, and overlays visually crisp when zoom changes.
         const viewport = pdfPage.getViewport({ scale });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        const outputScale = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
 
         const renderContext = {
           canvasContext: context,
           viewport: viewport,
+          transform: outputScale !== 1
+            ? [outputScale, 0, 0, outputScale, 0, 0]
+            : undefined,
         };
 
         const renderTask = pdfPage.render(renderContext);

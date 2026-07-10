@@ -2,18 +2,15 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PenSquare, Clock, CheckCircle, XCircle, FileText, Eye, AlertCircle, Lock } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
-import SignatureModal from '../components/SignatureModal'
 import { useApp } from '../context/AppContext'
-import type { Document, SignatureData } from '../types'
+import type { Document } from '../types'
 
 function ManagerDocCard({
   doc,
-  onSign,
   onReject,
   isLocked,
 }: {
   doc: Document
-  onSign: (doc: Document) => void
   onReject: (doc: Document) => void
   isLocked: boolean
 }) {
@@ -68,7 +65,7 @@ function ManagerDocCard({
           <XCircle size={13} /> Reject
         </button>
         <button
-          onClick={() => onSign(doc)}
+          onClick={() => navigate(`/documents/${doc.id}/editor`)}
           disabled={isLocked}
           className="btn-primary text-xs flex-1 justify-center disabled:opacity-40"
         >
@@ -81,7 +78,6 @@ function ManagerDocCard({
 
 export default function ManagerDashboard() {
   const { documents, updateDocument } = useApp()
-  const [signingDoc, setSigningDoc] = useState<Document | null>(null)
   const [rejectingDoc, setRejectingDoc] = useState<Document | null>(null)
   const navigate = useNavigate()
 
@@ -89,30 +85,7 @@ export default function ManagerDashboard() {
   const lockedDocs = documents.filter(d => d.status === 'pending_supervisor')
   const completedDocs = documents.filter(d => d.status === 'locked' || d.status === 'signed')
 
-  const handleSign = (doc: Document) => setSigningDoc(doc)
   const handleReject = (doc: Document) => setRejectingDoc(doc)
-
-  const handleSignConfirm = (sig: SignatureData) => {
-    if (!signingDoc) return
-    const updatedMarkers = (signingDoc.markers || []).map(m => {
-      if (m.assignedTo.accessRole === 'manager' && !m.signed) {
-        return {
-          ...m,
-          signed: true,
-          signature: sig.dataUrl,
-          signedAt: new Date(),
-        }
-      }
-      return m
-    })
-    updateDocument(signingDoc.id, {
-      status: 'locked',
-      markers: updatedMarkers,
-      updatedAt: new Date(),
-    })
-    setSigningDoc(null)
-    navigate('/complete', { state: { documentName: signingDoc.name, docId: signingDoc.id } })
-  }
 
   const handleRejectConfirm = () => {
     if (!rejectingDoc) return
@@ -162,7 +135,7 @@ export default function ManagerDashboard() {
           ) : (
             <div className="space-y-4">
               {readyDocs.map(doc => (
-                <ManagerDocCard key={doc.id} doc={doc} onSign={handleSign} onReject={handleReject} isLocked={false} />
+                <ManagerDocCard key={doc.id} doc={doc} onReject={handleReject} isLocked={false} />
               ))}
             </div>
           )}
@@ -176,7 +149,7 @@ export default function ManagerDashboard() {
             </h2>
             <div className="space-y-4">
               {lockedDocs.map(doc => (
-                <ManagerDocCard key={doc.id} doc={doc} onSign={handleSign} onReject={handleReject} isLocked={true} />
+                <ManagerDocCard key={doc.id} doc={doc} onReject={handleReject} isLocked={true} />
               ))}
             </div>
           </div>
@@ -213,14 +186,6 @@ export default function ManagerDashboard() {
           </div>
         )}
       </div>
-
-      {/* Signature Modal */}
-      {signingDoc && (
-        <SignatureModal
-          onConfirm={handleSignConfirm}
-          onClose={() => setSigningDoc(null)}
-        />
-      )}
 
       {/* Reject Confirm Modal */}
       {rejectingDoc && (

@@ -269,7 +269,9 @@ export default function DocumentComplete() {
                 {doc.markers?.filter(m => m.page === 1).map(marker => (
                   <div
                     key={marker.id}
-                    className="absolute border border-outline-variant/60 rounded-xl bg-surface-container-lowest/95 px-3 py-1.5 flex flex-col justify-center items-center shadow-md select-none pointer-events-none"
+                    className={`absolute flex flex-col justify-center items-center select-none pointer-events-none ${
+                      marker.signed ? '' : 'border border-outline-variant/60 rounded-xl bg-surface-container-lowest/95 px-3 py-1.5 shadow-md'
+                    }`}
                     style={{
                       left: `${marker.x}px`,
                       top: `${marker.y}px`,
@@ -278,19 +280,19 @@ export default function DocumentComplete() {
                     }}
                   >
                     {marker.signed ? (
-                      <div className="flex items-center justify-between w-full h-full p-1.5 gap-1.5 overflow-hidden">
+                      <div className="flex items-center justify-center w-full h-full overflow-hidden">
                         {marker.signature ? (
                           <img 
                             src={marker.signature} 
                             alt="Sig" 
-                            className="h-full w-auto max-w-[70%] object-contain" 
+                            className="w-full h-full object-contain" 
                           />
                         ) : (
                           <span className="text-[10px] font-bold text-stone-800 leading-tight font-mono">
                             {marker.assignedTo.initials}
                           </span>
                         )}
-                        <div className="flex flex-col justify-center leading-none text-emerald-600 flex-shrink-0 text-[8px]">
+                        <div className="hidden">
                           <span className="font-bold">Signed</span>
                           <span className="font-mono mt-0.5">✓ Secure</span>
                         </div>

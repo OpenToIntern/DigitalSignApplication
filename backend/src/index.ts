@@ -130,6 +130,14 @@ app.get('/api/documents', async (req: Request, res: Response) => {
             assignedTo: true
           }
         },
+        signatories: {
+          include: {
+            user: true
+          },
+          orderBy: {
+            order: 'asc'
+          }
+        },
         auditLogs: {
           include: {
             user: true
@@ -187,6 +195,14 @@ app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> 
             assignedTo: true
           }
         },
+        signatories: {
+          include: {
+            user: true
+          },
+          orderBy: {
+            order: 'asc'
+          }
+        },
         auditLogs: {
           include: {
             user: true
@@ -213,7 +229,7 @@ app.get('/api/documents/:id', async (req: Request, res: Response): Promise<any> 
 app.put('/api/documents/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, pageCount, markers, auditLog } = req.body;
+    const { status, pageCount, markers, recipients, auditLog } = req.body;
 
     // Fetch existing document to prevent overwriting missing fields
     const existing = await prisma.document.findUnique({ where: { id } });
@@ -262,6 +278,41 @@ app.put('/api/documents/:id', async (req: Request, res: Response) => {
         }
       }
 
+      // Update ordered signatories if provided
+      if (recipients !== undefined && Array.isArray(recipients)) {
+        await tx.documentSignatory.deleteMany({
+          where: { documentId: id }
+        });
+
+        for (const [index, recipient] of recipients.entries()) {
+          const role = recipient.accessRole === 'manager' ? 'manager' : 'supervisor';
+          const email = String(recipient.email || '').trim().toLowerCase();
+          if (!email) continue;
+
+          const user = await tx.user.upsert({
+            where: { email },
+            update: {
+              name: recipient.name || email.split('@')[0],
+              accessRole: role
+            },
+            create: {
+              id: recipient.id && !String(recipient.id).startsWith('temp-') ? recipient.id : undefined,
+              email,
+              name: recipient.name || email.split('@')[0],
+              accessRole: role
+            }
+          });
+
+          await tx.documentSignatory.create({
+            data: {
+              documentId: id,
+              userId: user.id,
+              order: index + 1
+            }
+          });
+        }
+      }
+
       // Append audit logs if provided
       if (auditLog !== undefined && Array.isArray(auditLog)) {
         // Get already stored logs to avoid duplicates
@@ -296,6 +347,14 @@ app.put('/api/documents/:id', async (req: Request, res: Response) => {
         markers: {
           include: {
             assignedTo: true
+          }
+        },
+        signatories: {
+          include: {
+            user: true
+          },
+          orderBy: {
+            order: 'asc'
           }
         },
         auditLogs: {
