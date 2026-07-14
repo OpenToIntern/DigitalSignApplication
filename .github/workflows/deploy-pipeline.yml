@@ -23,39 +23,13 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ 163.128.55.113 }}
-          username: ${{ ubuntu }}
-          key: ${{ -----BEGIN RSA PRIVATE KEY-----
-MIIEpAIBAAKCAQEAje/rZEOJ91glslNqGMbVqXcJrlp5+L3btbfBjxWQYQA+B8YH
-9ADfm8eXkMQ2ObdTe4naiVOAbUzXk97CP2u6NySqNn0xiYjV9Q72+m7MnQ/24PT/
-1um9mXesyKoZ9eEj+sHFW76znk+/dyJDCo0oRTi3yFtUBkIv123XPu1mcht6mf9F
-gujR2r3hA/rzYSFNC+n1O3P0VZEgscB5oLpOyDKwJLLS0yicJP+HwoV0ixlaaSTe
-+24N3qma2a5AqmOqfr4yGzBNmhvVaTC5KFB2tzdjHlujUU0JFZKZgTpNk/DCwYBt
-3dNYRkcbxvGDw9QNegfhVSFlKQ5m2m485gA9ZQIDAQABAoIBAEfMlcaiY6g7btZG
-W+Usr+iJztvj6M9rOzkxOzimL+LhvH8yLdPAnVywGnugxc1sb06O7X2KP+0KcgLb
-LGfolspOQcxOiECKd7D/YPBOHDNXYAtr4/9TPhXj9AOOCJPYz9qJKsy+Kx5qOPCK
-5F7yCOz7Q/yWNmr0ED9p0PiEHs6ZVwG6ZJVb2AEeeP6w10gpVRpX6r9pQbGYPYtq
-kSu1KAt9gCytdi/GpIyH9oM+rYADhXjvwdGUXDAr1PVTFi1faTFL2v3I8Al85Tfr
-ZHKCraXDpgkTYBWaHrvW1VnaLEMcE6OkacFXH0p2uNw8UZnyc45hni2wiq8svXr/
-OxYUQgECgYEAw2yoDBGML51KsPU9KeIZSyuffIeCNOUeDNeqbZugHsSVPbllwVVI
-ZNi3NSMbnNVU7Um2P5UBlfU3IKIqmiCR2BJqf5FYSG7uqPLQG6PxQKQWiwyIyIDu
-g2sfTpoX2u8CsAPPUGEaOS+DrEj0/TkkQHSaME6XRhCud4MKT4lenUcCgYEAue7v
-o5N1fPNkaCwSIIfsGw1pErc/0wAQXbU0d5XbRUKVcxT01Hpw3LWzDFvKVME/758F
-ZZE/ot+ARpApnaOZTtWtjGjy2Qq0uGjnzzODiMoZVvuimUMSAofvs0yTFIS99ZW4
-60fWBxuJF97vUnpYt0UEk0E8lvFmA8qQ+gv09fMCgYEApH2B2V6vy6gupVJW4Dki
-pyYZwRziWRl9OLwTBN1YYm1/XQv/fUMGg3PyibR6WoEqUeyYjV4jjpBvjXVSPJcr
-i16865FwaM+O7QAscQeGWq2DGBk9zN7RZCa3nFaRu8MwVO1wA60oAHhg8ZQbOkVt
-oR9EZWLRa7VA1PGkrRvoWqMCgYEAqyNUC3nUsDfO+VtnK+4v0g6b4hAtfOcYKUh6
-jH+wnaVVreFiIJi6fUv5C60JJM3jLYlvDDePHTke9tQGmgRVPgzLeuu2azPBd+OH
-Sl4d+bAbdsaSuQLU9uNsK9qVnlM4DW3METPDujMMEp6uJXpbYgTy2x82x7BVt7Oh
-kaWjySUCgYAWRqaDL3u5WcQGcr/T4ncs/CcdXej6C0eNoGof82jH25S+lnkjbekH
-60fanVY9JuYkm7m/tDs/GdbQfDI5QfqJkD2f49YxLy0rBby8gJkKTqzkpz9c/iVn
-iu2FDlC2r4SFloD3M0z9oGSAppGziurvvKrpNyjie/ShVIHUX7xA/w==
------END RSA PRIVATE KEY----- }}
-          port: ${{ 22 }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
             cd ${{ steps.config.outputs.path }}
             bash deploy.sh
 
       - name: Summary
-        run: echo "Deployed **${{ steps.config.outputs.env }}**
+        run: echo "Deployed **${{ steps.config.outputs.env }}**"
