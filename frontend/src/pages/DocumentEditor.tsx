@@ -7,9 +7,14 @@ import {
 import AppLayout from '../components/AppLayout'
 import SignatureModal from '../components/SignatureModal'
 import InviteModal from '../components/InviteModal'
+import PDFViewer from '../components/PDFViewer'
 import { useApp } from '../context/AppContext'
 import type { Document, Marker, User, SignatureData } from '../types'
 import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
+
+const BASE_PDF_SCALE = 1.2
+const MIN_MARKER_WIDTH = 80
+const MIN_MARKER_HEIGHT = 30
 
 export default function DocumentEditor() {
   const { id } = useParams<{ id: string }>()
@@ -20,65 +25,250 @@ export default function DocumentEditor() {
 
   const [activePage, setActivePage] = useState(1)
   const [markers, setMarkers] = useState<Marker[]>([])
+  const markersRef = useRef<Marker[]>([])
   const [showInvite, setShowInvite] = useState(false)
   const [showSign, setShowSign] = useState(false)
   const [activeMarkerToSign, setActiveMarkerToSign] = useState<Marker | null>(null)
   
   // Assignee selector state
   const [assignedUser, setAssignedUser] = useState<User>(SUPERVISOR_USER)
+  const [signatories, setSignatories] = useState<User[]>([SUPERVISOR_USER, MANAGER_USER])
 
-  // Dragging states
+  // Dragging and interactive states
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null)
+  const dragMovedRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
+  const [zoomScale, setZoomScale] = useState(1.2)
 
-  const handleMouseDown = (marker: Marker, e: React.MouseEvent) => {
-    if (!canPlaceMarkers) return
+  // Resizing states
+  const [resizingId, setResizingId] = useState<string | null>(null)
+  const [resizeStartDims, setResizeStartDims] = useState({ width: 0, height: 0 })
+  const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 })
+
+  // Panning/Scrolling states
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState({ scrollLeft: 0, scrollTop: 0, x: 0, y: 0 })
+  const viewportRef = useRef<HTMLDivElement>(null)
+
+  const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
+    setPdfDimensions({ width: info.width, height: info.height })
+    if (doc && doc.pageCount !== info.pageCount) {
+      updateDocument(doc.id, { pageCount: info.pageCount })
+    }
+  }
+
+  const getScaleFactor = () => zoomScale / BASE_PDF_SCALE
+
+  const handleMarkerPointerDown = (marker: Marker, e: React.PointerEvent) => {
+    if (!canMoveMarker(marker)) return
     e.preventDefault()
     e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
     setDraggingId(marker.id)
+    dragStartPosRef.current = { x: e.clientX, y: e.clientY }
+    dragMovedRef.current = false
     
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
+    const scaleFactor = getScaleFactor()
+    const visualX = marker.x * scaleFactor
+    const visualY = marker.y * scaleFactor
+
     setDragOffset({
-      x: clickX - marker.x,
-      y: clickY - marker.y,
+      x: clickX - visualX,
+      y: clickY - visualY,
     })
   }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMarkerMove = (e: React.PointerEvent | React.MouseEvent) => {
     if (!draggingId || !containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
+
+    if (dragStartPosRef.current) {
+      const deltaX = Math.abs(e.clientX - dragStartPosRef.current.x)
+      const deltaY = Math.abs(e.clientY - dragStartPosRef.current.y)
+      if (deltaX > 3 || deltaY > 3) {
+        dragMovedRef.current = true
+      }
+    }
     
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
-    let newX = clickX - dragOffset.x
-    let newY = clickY - dragOffset.y
+    let newVisualX = clickX - dragOffset.x
+    let newVisualY = clickY - dragOffset.y
     
     const marker = markers.find(m => m.id === draggingId)
     if (!marker) return
     
-    newX = Math.max(0, Math.min(rect.width - marker.width, newX))
-    newY = Math.max(0, Math.min(rect.height - marker.height, newY))
+    const scaleFactor = getScaleFactor()
+    const visualWidth = marker.width * scaleFactor
+    const visualHeight = marker.height * scaleFactor
+
+    newVisualX = Math.max(0, Math.min(rect.width - visualWidth, newVisualX))
+    newVisualY = Math.max(0, Math.min(rect.height - visualHeight, newVisualY))
     
-    const updated = markers.map(m => m.id === draggingId ? { ...m, x: newX, y: newY } : m)
+    const baseNewX = newVisualX / scaleFactor
+    const baseNewY = newVisualY / scaleFactor
+
+    const updated = markers.map(m => m.id === draggingId ? { ...m, x: baseNewX, y: baseNewY } : m)
+    markersRef.current = updated
     setMarkers(updated)
   }
 
-  const handleMouseUp = () => {
+  const handleResizePointerDown = (marker: Marker, e: React.PointerEvent) => {
+    if (!canResizeMarker(marker)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setResizingId(marker.id)
+    setResizeStartDims({ width: marker.width, height: marker.height })
+    setResizeStartPos({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleResizeMove = (e: React.PointerEvent | React.MouseEvent) => {
+    if (!resizingId) return
+    const marker = markers.find(m => m.id === resizingId)
+    if (!marker) return
+
+    const deltaX = e.clientX - resizeStartPos.x
+    const deltaY = e.clientY - resizeStartPos.y
+
+    const scaleFactor = getScaleFactor()
+    const pageRect = containerRef.current?.getBoundingClientRect()
+    const maxWidth = pageRect ? Math.max(MIN_MARKER_WIDTH, pageRect.width / scaleFactor - marker.x) : Infinity
+    const maxHeight = pageRect ? Math.max(MIN_MARKER_HEIGHT, pageRect.height / scaleFactor - marker.y) : Infinity
+    const newWidth = Math.min(maxWidth, Math.max(MIN_MARKER_WIDTH, resizeStartDims.width + (deltaX / scaleFactor)))
+    const newHeight = Math.min(maxHeight, Math.max(MIN_MARKER_HEIGHT, resizeStartDims.height + (deltaY / scaleFactor)))
+
+    const updated = markers.map(m => m.id === resizingId ? { ...m, width: newWidth, height: newHeight } : m)
+    markersRef.current = updated
+    setMarkers(updated)
+  }
+
+  const finishMarkerMove = () => {
     if (draggingId && doc) {
-      updateDocument(doc.id, { markers })
+      updateDocument(doc.id, { markers: markersRef.current })
       setDraggingId(null)
+      dragStartPosRef.current = null
+    }
+  }
+
+  const handleViewportPointerDown = (e: React.PointerEvent) => {
+    const target = e.target as HTMLElement
+    // Avoid triggering panning when clicking nodes, buttons, dropdowns, etc.
+    if (target.closest('.node-marker-item') || target.closest('button') || target.closest('select') || target.closest('input')) {
+      return
+    }
+    if (e.button !== 0) return // Left click only
+    
+    e.preventDefault() // Prevents text selection/image dragging from interrupting our scroll panning
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setIsPanning(true)
+    if (viewportRef.current) {
+      setPanStart({
+        scrollLeft: viewportRef.current.scrollLeft,
+        scrollTop: viewportRef.current.scrollTop,
+        x: e.clientX,
+        y: e.clientY
+      })
+    }
+  }
+
+  const handleViewportPointerMove = (e: React.PointerEvent) => {
+    if (isPanning && viewportRef.current) {
+      const dx = e.clientX - panStart.x
+      const dy = e.clientY - panStart.y
+      viewportRef.current.scrollLeft = panStart.scrollLeft - dx
+      viewportRef.current.scrollTop = panStart.scrollTop - dy
+      return
+    }
+
+    if (resizingId) {
+      handleResizeMove(e)
+      
+      // Auto edge scroll detection during resize
+      if (viewportRef.current) {
+        const viewport = viewportRef.current
+        const rect = viewport.getBoundingClientRect()
+        const relativeX = e.clientX - rect.left
+        const relativeY = e.clientY - rect.top
+        const scrollThreshold = 70
+        const scrollSpeed = 16
+        
+        if (relativeY < scrollThreshold) {
+          viewport.scrollTop -= scrollSpeed
+        } else if (relativeY > rect.height - scrollThreshold) {
+          viewport.scrollTop += scrollSpeed
+        }
+        if (relativeX < scrollThreshold) {
+          viewport.scrollLeft -= scrollSpeed
+        } else if (relativeX > rect.width - scrollThreshold) {
+          viewport.scrollLeft += scrollSpeed
+        }
+      }
+      return
+    }
+
+    if (draggingId) {
+      handleMarkerMove(e)
+
+      // Auto edge scroll detection during drag
+      if (viewportRef.current) {
+        const viewport = viewportRef.current
+        const rect = viewport.getBoundingClientRect()
+        const relativeX = e.clientX - rect.left
+        const relativeY = e.clientY - rect.top
+        const scrollThreshold = 70
+        const scrollSpeed = 16
+        
+        if (relativeY < scrollThreshold) {
+          viewport.scrollTop -= scrollSpeed
+        } else if (relativeY > rect.height - scrollThreshold) {
+          viewport.scrollTop += scrollSpeed
+        }
+        if (relativeX < scrollThreshold) {
+          viewport.scrollLeft -= scrollSpeed
+        } else if (relativeX > rect.width - scrollThreshold) {
+          viewport.scrollLeft += scrollSpeed
+        }
+      }
+    }
+  }
+
+  const handleViewportPointerUp = () => {
+    if (isPanning) {
+      setIsPanning(false)
+    }
+    if (draggingId) {
+      finishMarkerMove()
+    }
+    if (resizingId) {
+      if (doc) {
+        updateDocument(doc.id, { markers: markersRef.current })
+      }
+      setResizingId(null)
     }
   }
 
   useEffect(() => {
     if (doc) {
-      setMarkers(doc.markers || [])
+      const nextMarkers = doc.markers || []
+      markersRef.current = nextMarkers
+      setMarkers(nextMarkers)
+      const nextSignatories = doc.recipients?.length ? doc.recipients : [SUPERVISOR_USER, MANAGER_USER]
+      setSignatories(nextSignatories)
+      setAssignedUser(current => (
+        nextSignatories.some(user => user.id === current.id || user.email === current.email)
+          ? current
+          : nextSignatories[0]
+      ))
     }
   }, [doc])
 
@@ -103,6 +293,21 @@ export default function DocumentEditor() {
   const canPlaceMarkers = isStaff && (doc.status === 'draft' || doc.status === 'rejected')
   const canSupervisorSign = isSupervisor && doc.status === 'pending_supervisor'
   const canManagerSign = isManager && doc.status === 'pending_manager'
+  const canCurrentSignerEditMarker = (marker: Marker) => {
+    const isSigningWorkflow = doc.status === 'pending_supervisor' || doc.status === 'pending_manager'
+    return isSigningWorkflow &&
+      !marker.signed &&
+      marker.assignedTo.accessRole === currentUser?.accessRole &&
+      (isSupervisor || isManager)
+  }
+
+  const canMoveMarker = (marker: Marker) => {
+    return canPlaceMarkers || canCurrentSignerEditMarker(marker)
+  }
+
+  const canResizeMarker = (marker: Marker) => {
+    return canPlaceMarkers || canCurrentSignerEditMarker(marker)
+  }
 
   const handlePlaceMarker = (type: Marker['type']) => {
     if (!canPlaceMarkers) return
@@ -114,15 +319,21 @@ export default function DocumentEditor() {
       height: 45,
       page: activePage,
       type,
-      assignedTo: assignedUser,
+      assignedTo: assignedUser || signatories[0] || SUPERVISOR_USER,
       signed: false,
     }
     const updated = [...markers, newMarker]
+    markersRef.current = updated
     setMarkers(updated)
     updateDocument(doc.id, { markers: updated })
   }
 
   const handleMarkerClick = (marker: Marker) => {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
+
     const isAssigned = marker.assignedTo.accessRole === currentUser?.accessRole
     const isSupervisorTurn = canSupervisorSign && marker.assignedTo.accessRole === 'supervisor'
     const isManagerTurn = canManagerSign && marker.assignedTo.accessRole === 'manager'
@@ -163,6 +374,7 @@ export default function DocumentEditor() {
     })
 
     setMarkers(updatedMarkers)
+    markersRef.current = updatedMarkers
     setShowSign(false)
 
     const newAuditLog = [
@@ -213,10 +425,22 @@ export default function DocumentEditor() {
     setShowInvite(true)
   }
 
-  const handleInviteConfirm = () => {
+  const handleInviteConfirm = (selectedSignatories: User[]) => {
     const now = new Date()
+    setSignatories(selectedSignatories)
+    const selectedEmails = new Set(selectedSignatories.map(user => user.email))
+    const workflowMarkers = markers.map(marker => (
+      selectedEmails.has(marker.assignedTo.email)
+        ? marker
+        : { ...marker, assignedTo: selectedSignatories[0] || marker.assignedTo }
+    ))
+    markersRef.current = workflowMarkers
+    setMarkers(workflowMarkers)
+
     updateDocument(doc.id, {
       status: 'pending_supervisor',
+      recipients: selectedSignatories,
+      markers: workflowMarkers,
       auditLog: [
         ...(doc.auditLog || []),
         {
@@ -227,6 +451,7 @@ export default function DocumentEditor() {
           ip: '192.168.1.108',
           documentId: doc.id,
           documentName: doc.name,
+          metadata: { action: `Assigned ${selectedSignatories.length} signatories` },
         },
         {
           id: `al-${Date.now() + 1}`,
@@ -236,7 +461,7 @@ export default function DocumentEditor() {
           ip: '192.168.1.108',
           documentId: doc.id,
           documentName: doc.name,
-          metadata: { action: 'Invited Supervisor and Manager' }
+          metadata: { action: `Invited ${selectedSignatories.map(user => user.email).join(', ')}` }
         }
       ]
     })
@@ -247,6 +472,7 @@ export default function DocumentEditor() {
   const deleteMarker = (mid: string) => {
     if (!canPlaceMarkers) return
     const updated = markers.filter(m => m.id !== mid)
+    markersRef.current = updated
     setMarkers(updated)
     updateDocument(doc.id, { markers: updated })
   }
@@ -390,20 +616,47 @@ export default function DocumentEditor() {
 
       <div className="flex flex-1 h-[calc(100vh-7rem)] overflow-hidden">
         {/* Editor Main Canvas */}
-        <div className="flex-1 flex flex-col bg-surface-container-low overflow-y-auto p-8 relative items-center justify-center bg-confetti-gradient">
+        <div 
+          ref={viewportRef}
+          onPointerDown={handleViewportPointerDown}
+          onPointerMove={handleViewportPointerMove}
+          onPointerUp={handleViewportPointerUp}
+          onPointerCancel={handleViewportPointerUp}
+          className="flex-1 flex flex-col bg-surface-container-low overflow-auto p-8 relative items-start justify-start bg-confetti-gradient scroll-smooth"
+          style={{
+            cursor: isPanning ? 'grabbing' : draggingId ? 'move' : resizingId ? 'se-resize' : 'grab',
+            touchAction: 'pan-x pan-y'
+          }}
+        >
           
           {/* Main White Page Canvas */}
-          <div className="relative w-full max-w-2xl bg-white text-slate-900 border border-outline-variant/80 rounded-lg overflow-hidden flex flex-col shadow-md" style={{ height: '560px' }}>
-            
-            {/* Agreement contents mockup */}
+          <div 
+            className="relative bg-white text-slate-900 border border-outline-variant/80 rounded-lg shadow-md overflow-hidden flex flex-col select-none flex-shrink-0 mx-auto"
+            style={{ 
+              width: pdfDimensions ? `${pdfDimensions.width}px` : '100%',
+              height: pdfDimensions ? `${pdfDimensions.height}px` : '560px'
+            }}
+          >
+            {/* Agreement contents / Real PDF page */}
             <div
               ref={containerRef}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              className="flex-1 p-10 relative overflow-hidden bg-white select-none"
+              className="flex-1 relative overflow-hidden bg-white"
+              style={{
+                width: '100%',
+                height: '100%',
+                padding: doc.downloadUrl ? '0' : '2.5rem'
+              }}
             >
-              {renderDocumentMockup()}
+              {doc.downloadUrl ? (
+                <PDFViewer 
+                  url={doc.downloadUrl} 
+                  page={activePage} 
+                  onLoadSuccess={handlePdfLoadSuccess}
+                  scale={zoomScale}
+                />
+              ) : (
+                renderDocumentMockup()
+              )}
 
               {/* Render Dragged / Placed Node Markers */}
               {markers.filter(m => m.page === activePage).map(marker => {
@@ -412,49 +665,75 @@ export default function DocumentEditor() {
                   ((canSupervisorSign && marker.assignedTo.accessRole === 'supervisor') ||
                    (canManagerSign && marker.assignedTo.accessRole === 'manager'))
 
+                const scaleFactor = getScaleFactor()
+                const visualX = Math.round(marker.x * scaleFactor)
+                const visualY = Math.round(marker.y * scaleFactor)
+                const visualWidth = Math.round(marker.width * scaleFactor)
+                const visualHeight = Math.round(marker.height * scaleFactor)
+                const isResizable = canResizeMarker(marker)
+
                 return (
                   <div
                     key={marker.id}
-                    onMouseDown={(e) => handleMouseDown(marker, e)}
+                    onPointerDown={(e) => handleMarkerPointerDown(marker, e)}
                     onClick={() => handleMarkerClick(marker)}
                     style={{
                       position: 'absolute',
-                      left: `${marker.x}px`,
-                      top: `${marker.y}px`,
-                      width: `${marker.width}px`,
-                      height: `${marker.height}px`,
-                      cursor: canPlaceMarkers ? 'move' : 'pointer',
+                      left: `${visualX}px`,
+                      top: `${visualY}px`,
+                      width: `${visualWidth}px`,
+                      height: `${visualHeight}px`,
+                      cursor: canMoveMarker(marker) ? 'move' : isClickable ? 'pointer' : 'default',
                     }}
-                    className={`rounded-lg border shadow-sm flex items-center justify-between px-3 py-1 cursor-pointer transition-all select-none
+                    className={`node-marker-item rounded-lg flex items-center justify-between cursor-pointer transition-all select-none overflow-hidden
                       ${marker.signed
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                        ? 'text-emerald-800'
                         : isClickable
-                          ? 'border-primary bg-primary-container text-on-primary-container animate-pulse ring-2 ring-primary/30'
-                          : 'border-outline-variant bg-surface-container-low text-on-surface'
+                          ? 'border border-primary bg-primary-container text-on-primary-container shadow-sm animate-pulse ring-2 ring-primary/30'
+                          : 'border border-outline-variant bg-surface-container-low text-on-surface shadow-sm'
                       }`}
                   >
                     {marker.signed ? (
-                      <div className="flex items-center gap-1.5 w-full">
-                        <img src={marker.signature} alt="Sig" className="max-h-8 max-w-[80px] object-contain" />
-                        <span className="text-[8px] font-mono text-emerald-600 block leading-tight">
-                          Signed<br/>✓ Secure
-                        </span>
+                      <div className="flex items-center justify-center w-full h-full overflow-hidden">
+                        <img 
+                          src={marker.signature} 
+                          alt="Sig" 
+                          className="w-full h-full object-contain"
+                          style={{ imageRendering: 'auto' }}
+                        />
                       </div>
                     ) : (
-                      <>
+                      <div className="flex items-center justify-between w-full h-full px-3 py-1 gap-2">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-bold truncate capitalize">{marker.type}</p>
-                          <p className="text-[8px] text-on-surface-variant truncate">{marker.assignedTo.name.split(' ')[0]}</p>
+                          <p className="font-bold truncate capitalize leading-tight text-[10px]">
+                            {marker.type}
+                          </p>
+                          <p className="text-on-surface-variant truncate leading-none mt-0.5 text-[8px]">
+                            {marker.assignedTo.name.split(' ')[0]}
+                          </p>
                         </div>
                         {canPlaceMarkers && (
                           <button
                             onClick={(e) => { e.stopPropagation(); deleteMarker(marker.id) }}
-                            className="p-0.5 text-on-surface-variant hover:text-error rounded hover:bg-surface-container"
+                            className="p-0.5 text-on-surface-variant hover:text-error rounded hover:bg-surface-container flex-shrink-0"
                           >
-                            ×
+                            x
                           </button>
                         )}
-                      </>
+                      </div>
+                    )}
+
+                    {/* Resize handle in the bottom-right corner */}
+                    {isResizable && (
+                      <div
+                        onPointerDown={(e) => handleResizePointerDown(marker, e)}
+                        className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize bg-primary hover:bg-primary/80 rounded-tl-lg flex items-center justify-center shadow-sm text-white select-none"
+                        style={{ zIndex: 10 }}
+                      >
+                        <svg width="6" height="6" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M6 0L0 6M6 3L3 6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                        </svg>
+                      </div>
                     )}
                   </div>
                 )
@@ -463,11 +742,23 @@ export default function DocumentEditor() {
           </div>
 
           {/* Bottom Zoom/Undo Page Controls Bar */}
-          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant">
+          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant z-10 flex-shrink-0">
             <div className="flex items-center gap-3">
-              <button className="p-1 hover:bg-surface-container rounded"><ZoomOut size={14} /></button>
-              <span className="font-semibold font-mono">100%</span>
-              <button className="p-1 hover:bg-surface-container rounded"><ZoomIn size={14} /></button>
+              <button 
+                onClick={() => setZoomScale(z => Math.max(0.6, z - 0.15))}
+                className="p-1 hover:bg-surface-container rounded"
+              >
+                <ZoomOut size={14} />
+              </button>
+              <span className="font-semibold font-mono w-10 text-center">
+                {Math.round(getScaleFactor() * 100)}%
+              </span>
+              <button 
+                onClick={() => setZoomScale(z => Math.min(2.5, z + 0.15))}
+                className="p-1 hover:bg-surface-container rounded"
+              >
+                <ZoomIn size={14} />
+              </button>
             </div>
             <div className="w-px h-4 bg-outline-variant" />
             <div className="flex items-center gap-3">
@@ -475,7 +766,25 @@ export default function DocumentEditor() {
               <button className="p-1 hover:bg-surface-container rounded" title="Redo"><RotateCw size={14} /></button>
             </div>
             <div className="w-px h-4 bg-outline-variant" />
-            <span className="font-semibold font-mono">Page 1 of {doc.pageCount || 1}</span>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setActivePage(p => Math.max(1, p - 1))}
+                disabled={activePage === 1}
+                className="p-1 hover:bg-surface-container rounded disabled:opacity-30"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="font-semibold font-mono">
+                Page {activePage} of {doc.pageCount || 1}
+              </span>
+              <button 
+                onClick={() => setActivePage(p => Math.min(doc.pageCount || 1, p + 1))}
+                disabled={activePage === (doc.pageCount || 1)}
+                className="p-1 hover:bg-surface-container rounded disabled:opacity-30"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -523,11 +832,17 @@ export default function DocumentEditor() {
                 <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Assigned To</h3>
                 <select
                   value={assignedUser.id}
-                  onChange={e => setAssignedUser(e.target.value === SUPERVISOR_USER.id ? SUPERVISOR_USER : MANAGER_USER)}
+                  onChange={e => {
+                    const nextUser = signatories.find(user => user.id === e.target.value)
+                    if (nextUser) setAssignedUser(nextUser)
+                  }}
                   className="w-full input-field py-2 text-xs"
                 >
-                  <option value={SUPERVISOR_USER.id}>{SUPERVISOR_USER.name} (Supervisor)</option>
-                  <option value={MANAGER_USER.id}>{MANAGER_USER.name} (Manager)</option>
+                  {signatories.map((user, index) => (
+                    <option key={`${user.id}-${user.email}`} value={user.id}>
+                      {index + 1}. {user.name} ({user.accessRole === 'manager' ? 'Manager' : 'Supervisor'})
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
@@ -536,14 +851,16 @@ export default function DocumentEditor() {
             <div className="border-t border-outline-variant/40 pt-4">
               <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Recipients List</h3>
               <div className="space-y-2">
-                <div className="flex justify-between items-center text-xs p-2.5 bg-surface-container-low rounded-lg">
-                  <span className="text-on-surface-variant">1. Supervisor</span>
-                  <span className="text-primary font-bold">Active</span>
-                </div>
-                <div className="flex justify-between items-center text-xs p-2.5 bg-surface-container-low rounded-lg">
-                  <span className="text-on-surface-variant">2. Manager</span>
-                  <span className="text-on-surface-variant/40">Locked</span>
-                </div>
+                {signatories.map((user, index) => (
+                  <div key={`${user.id}-${user.email}`} className="flex justify-between items-center text-xs p-2.5 bg-surface-container-low rounded-lg">
+                    <span className="text-on-surface-variant truncate pr-2">
+                      {index + 1}. {user.name}
+                    </span>
+                    <span className={index === 0 ? 'text-primary font-bold' : 'text-on-surface-variant/40'}>
+                      {index === 0 ? 'Active' : 'Locked'}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -551,7 +868,10 @@ export default function DocumentEditor() {
           {/* Add Recipient bottom action */}
           {canPlaceMarkers && (
             <div className="p-5 border-t border-outline-variant/40">
-              <button className="w-full btn-secondary justify-center py-2.5 text-xs font-bold">
+              <button
+                onClick={() => setShowInvite(true)}
+                className="w-full btn-secondary justify-center py-2.5 text-xs font-bold"
+              >
                 + ADD RECIPIENT
               </button>
             </div>
@@ -563,6 +883,7 @@ export default function DocumentEditor() {
       {showInvite && (
         <InviteModal
           documentName={doc.name}
+          initialSignatories={signatories}
           onConfirm={handleInviteConfirm}
           onClose={() => setShowInvite(false)}
         />

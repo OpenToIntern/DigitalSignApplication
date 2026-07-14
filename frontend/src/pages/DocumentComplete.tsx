@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { CheckCircle, Download, Shield, Home, PlusCircle, ArrowLeft, Lock, FileText } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
+import PDFViewer from '../components/PDFViewer'
 import { useApp } from '../context/AppContext'
 
 export default function DocumentComplete() {
@@ -13,6 +14,12 @@ export default function DocumentComplete() {
   // Find the exact document, or default to the most recently completed/locked document
   const doc = documents.find(d => d.id === state?.docId) || documents.find(d => d.status === 'locked')
   const documentName = doc?.name || state?.documentName || 'Standard Enterprise Service Agreement v2.pdf'
+
+  const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
+
+  const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
+    setPdfDimensions({ width: info.width, height: info.height })
+  }
 
   const renderDocumentMockup = () => {
     if (!doc) return null
@@ -228,37 +235,67 @@ export default function DocumentComplete() {
             </h2>
             
             {/* The Document Page Canvas */}
-            <div className="relative w-full bg-white text-slate-900 border border-outline-variant/60 rounded-lg overflow-hidden flex flex-col shadow-sm flex-1" style={{ minHeight: '520px' }}>
-              <div className="flex-1 p-10 overflow-y-auto relative select-none" style={{ fontSize: '12px' }}>
+            <div 
+              className="relative bg-white text-slate-900 border border-outline-variant/60 rounded-lg shadow-sm flex flex-col select-none"
+              style={{ 
+                width: pdfDimensions ? `${pdfDimensions.width}px` : '100%',
+                maxWidth: '100%',
+                height: pdfDimensions ? `${pdfDimensions.height}px` : '520px',
+                minHeight: pdfDimensions ? `${pdfDimensions.height}px` : '520px'
+              }}
+            >
+              <div 
+                className="flex-1 relative overflow-hidden bg-white" 
+                style={{ 
+                  width: '100%',
+                  height: '100%',
+                  padding: doc.downloadUrl ? '0' : '2.5rem'
+                }}
+              >
                 
                 {/* Visual Contract Details */}
-                {renderDocumentMockup()}
+                {doc.downloadUrl ? (
+                  <PDFViewer 
+                    url={doc.downloadUrl} 
+                    page={1} 
+                    onLoadSuccess={handlePdfLoadSuccess}
+                    scale={1.2}
+                  />
+                ) : (
+                  renderDocumentMockup()
+                )}
 
                 {/* Overlaid Placed Signatures */}
                 {doc.markers?.filter(m => m.page === 1).map(marker => (
                   <div
                     key={marker.id}
-                    className="absolute border border-outline-variant/60 rounded-xl bg-surface-container-lowest/95 px-3 py-1.5 flex flex-col justify-center items-center shadow-md select-none pointer-events-none"
+                    className={`absolute flex flex-col justify-center items-center select-none pointer-events-none ${
+                      marker.signed ? '' : 'border border-outline-variant/60 rounded-xl bg-surface-container-lowest/95 px-3 py-1.5 shadow-md'
+                    }`}
                     style={{
-                      left: `${marker.x}%`,
-                      top: `${marker.y}%`,
-                      transform: 'translate(-50%, -50%)',
-                      minWidth: '120px',
-                      height: '48px',
+                      left: `${marker.x}px`,
+                      top: `${marker.y}px`,
+                      width: `${marker.width}px`,
+                      height: `${marker.height}px`,
                     }}
                   >
                     {marker.signed ? (
-                      <div className="flex items-center gap-1.5 w-full">
+                      <div className="flex items-center justify-center w-full h-full overflow-hidden">
                         {marker.signature ? (
-                          <img src={marker.signature} alt="Sig" className="max-h-8 max-w-[80px] object-contain" />
+                          <img 
+                            src={marker.signature} 
+                            alt="Sig" 
+                            className="w-full h-full object-contain" 
+                          />
                         ) : (
                           <span className="text-[10px] font-bold text-stone-800 leading-tight font-mono">
                             {marker.assignedTo.initials}
                           </span>
                         )}
-                        <span className="text-[8px] font-mono text-emerald-600 block leading-tight font-extrabold">
-                          Signed<br/>✓ Secure
-                        </span>
+                        <div className="hidden">
+                          <span className="font-bold">Signed</span>
+                          <span className="font-mono mt-0.5">✓ Secure</span>
+                        </div>
                       </div>
                     ) : (
                       <div className="text-[9px] font-bold text-on-surface-variant flex flex-col items-center">
