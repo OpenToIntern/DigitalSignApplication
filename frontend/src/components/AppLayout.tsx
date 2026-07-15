@@ -1,11 +1,13 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, FileText, ShieldCheck, ClipboardList,
   Settings, LogOut, Menu, X, Bell, ChevronDown,
-  PenSquare, Users, Lock, Search, HelpCircle, FileCheck, Layers, History
+  PenSquare, Users, Lock, Search, HelpCircle, FileCheck
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import type { Notification } from '../types'
+
 
 interface NavItem {
   to: string
@@ -28,9 +30,93 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [searchText, setSearchText] = useState('')
-  const { currentUser, logout } = useApp()
+  const { currentUser, logout, token } = useApp()
   const navigate = useNavigate()
   const location = useLocation()
+
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const fetchNotifications = async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/notifications`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setNotifications(data)
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err)
+    }
+  }
+
+  useEffect(() => {
+    if (token) {
+      fetchNotifications()
+      const interval = setInterval(fetchNotifications, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [token])
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setNotificationsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleNotificationClick = async (notif: Notification) => {
+    setNotificationsOpen(false)
+    if (!notif.read) {
+      setNotifications(prev =>
+        prev.map(n => n.id === notif.id ? { ...n, read: true } : n)
+      )
+      try {
+        await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/notifications/${notif.id}/read`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+      } catch (err) {
+        console.error('Error marking notification as read:', err)
+      }
+    }
+    // Route locked-document notifications to the /complete page (which has Download)
+    if (notif.type === 'document_locked') {
+      navigate('/complete', { state: { documentName: notif.document?.name, docId: notif.documentId } })
+    } else {
+      navigate(`/documents/${notif.documentId}/editor`)
+    }
+  }
+
+  const formatRelativeTime = (dateStr: string) => {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) return ''
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffSec = Math.floor(diffMs / 1000)
+    const diffMin = Math.floor(diffSec / 60)
+    const diffHr = Math.floor(diffMin / 60)
+    const diffDay = Math.floor(diffHr / 24)
+
+    if (diffSec < 10) return 'just now'
+    if (diffSec < 60) return `${diffSec}s ago`
+    if (diffMin < 60) return `${diffMin}m ago`
+    if (diffHr < 24) return `${diffHr}h ago`
+    return `${diffDay}d ago`
+  }
+
+  const unreadCount = notifications.filter(n => !n.read).length
+
 
   const handleLogout = () => {
     logout()
@@ -60,12 +146,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="flex flex-col gap-2 w-full px-2">
               <button className="w-full h-11 flex items-center justify-center rounded-lg text-primary bg-primary/10 border border-primary/20" title="Document Details">
                 <FileText size={18} />
-              </button>
-              <button className="w-full h-11 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-low" title="Fields / Layers">
-                <Layers size={18} />
-              </button>
-              <button className="w-full h-11 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-low" title="Audit Trail History">
-                <History size={18} />
               </button>
             </div>
           </div>
@@ -223,9 +303,63 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Action icons */}
           <div className="flex items-center gap-2">
-            <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant hover:text-on-surface transition-colors">
-              <Bell size={18} />
-            </button>
+            {/* Notifications Bell Dropdown */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant hover:text-on-surface transition-colors relative"
+              >
+                <Bell size={18} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-primary text-[10px] font-bold text-white flex items-center justify-center rounded-full ring-2 ring-background">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notificationsOpen && (
+                <div className="absolute right-0 top-full mt-2 w-80 max-h-96 overflow-y-auto bg-surface-container-lowest border border-outline-variant rounded-xl shadow-lg z-50 py-1 divide-y divide-outline-variant/30 animate-slide-up">
+                  <div className="px-4 py-2 flex items-center justify-between bg-surface-container-low/50">
+                    <span className="font-semibold text-xs text-on-surface">Notifications</span>
+                    {unreadCount > 0 && (
+                      <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                        {unreadCount} unread
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-72 overflow-y-auto divide-y divide-outline-variant/20">
+                    {notifications.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-on-surface-variant/60">
+                        No notifications yet
+                      </div>
+                    ) : (
+                      notifications.map(notif => (
+                        <button
+                          key={notif.id}
+                          onClick={() => handleNotificationClick(notif)}
+                          className={`w-full text-left px-4 py-3 flex flex-col gap-1 transition-colors hover:bg-surface-container-low ${
+                            !notif.read ? 'bg-primary/[0.03]' : ''
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className={`text-xs text-on-surface leading-normal ${notif.read ? 'font-normal' : 'font-semibold text-primary'}`}>
+                              {notif.message}
+                            </span>
+                            {!notif.read && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0 mt-1" />
+                            )}
+                          </div>
+                          <span className="text-[10px] text-on-surface-variant/50">
+                            {formatRelativeTime(notif.createdAt)}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant hover:text-on-surface transition-colors">
               <HelpCircle size={18} />
             </button>

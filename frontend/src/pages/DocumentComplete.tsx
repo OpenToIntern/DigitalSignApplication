@@ -1,14 +1,18 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { CheckCircle, Download, Shield, Home, PlusCircle, ArrowLeft, Lock, FileText } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
-import PDFViewer from '../components/PDFViewer'
 import { useApp } from '../context/AppContext'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// Match the same base scale used in DocumentEditor so stored marker coords align
+const PREVIEW_SCALE = 1.2
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
 
 export default function DocumentComplete() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { documents } = useApp()
+  const { documents, token } = useApp()
   const state = location.state as { documentName?: string; docId?: string } | null
   
   // Find the exact document, or default to the most recently completed/locked document
@@ -16,10 +20,106 @@ export default function DocumentComplete() {
   const documentName = doc?.name || state?.documentName || 'Standard Enterprise Service Agreement v2.pdf'
 
   const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
+  const [containerWidth, setContainerWidth] = useState<number>(0)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const renderTaskRef = useRef<any>(null)
 
-  const handlePdfLoadSuccess = (info: { pageCount: number; width: number; height: number }) => {
-    setPdfDimensions({ width: info.width, height: info.height })
-  }
+  // Render the PDF directly onto a canvas so marker overlays share the same (0,0) origin
+  useEffect(() => {
+    if (!doc?.downloadUrl || !canvasRef.current || !token) return
+
+    let objectUrl = ''
+    let isCancelled = false
+
+    const fetchAndLoadPdf = async () => {
+      try {
+        const res = await fetch(doc.downloadUrl!, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!res.ok) throw new Error('Failed to fetch PDF')
+        const blob = await res.blob()
+        if (isCancelled) return
+        objectUrl = URL.createObjectURL(blob)
+
+        const loadingTask = pdfjsLib.getDocument({ url: objectUrl })
+        const pdfDoc = await loadingTask.promise
+        if (isCancelled) return
+
+        const pdfPage = await pdfDoc.getPage(1)
+        if (isCancelled || !canvasRef.current) return
+
+        const canvas = canvasRef.current
+        const context = canvas.getContext('2d')!
+
+        if (renderTaskRef.current) {
+          renderTaskRef.current.cancel()
+        }
+
+        const viewport = pdfPage.getViewport({ scale: PREVIEW_SCALE })
+        const outputScale = window.devicePixelRatio || 1
+
+        // Physical (bitmap) dimensions use devicePixelRatio for sharpness
+        canvas.width  = Math.floor(viewport.width  * outputScale)
+        canvas.height = Math.floor(viewport.height * outputScale)
+        // CSS dimensions match the PDF viewport exactly — this is the coordinate space markers use
+        canvas.style.width  = `${viewport.width}px`
+        canvas.style.height = `${viewport.height}px`
+
+        setPdfDimensions({ width: viewport.width, height: viewport.height })
+
+        const renderContext = {
+          canvasContext: context,
+          viewport,
+          transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
+        }
+
+        const renderTask = pdfPage.render(renderContext as any)
+        renderTaskRef.current = renderTask
+        await renderTask.promise
+      } catch (err: any) {
+        if (err?.name !== 'RenderingCancelledException' && !isCancelled) {
+          console.error('DocumentComplete PDF render error:', err)
+        }
+      }
+    }
+
+    fetchAndLoadPdf()
+
+    return () => {
+      isCancelled = true
+      if (renderTaskRef.current) renderTaskRef.current.cancel()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [doc?.downloadUrl, token])
+
+  // Measure the visual container width using a ResizeObserver to prevent overflow ("keluar dari kotak")
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // contentRect.width is the inner content width (padding is already excluded)
+        const innerWidth = entry.contentRect.width;
+        setContainerWidth(innerWidth > 0 ? innerWidth : 0);
+      }
+    });
+
+    observer.observe(containerRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [pdfDimensions]);
+
+  const displayScale = pdfDimensions && containerWidth > 0 && containerWidth < pdfDimensions.width
+    ? containerWidth / pdfDimensions.width
+    : 1;
+
+  const displayWidth = pdfDimensions ? pdfDimensions.width * displayScale : 0;
+  const displayHeight = pdfDimensions ? pdfDimensions.height * displayScale : 0;
 
   const renderDocumentMockup = () => {
     if (!doc) return null
@@ -206,7 +306,32 @@ export default function DocumentComplete() {
           {/* Action buttons */}
           <div className="flex flex-col gap-2">
             <button
-              onClick={() => alert('Downloading signed and secure PDF document with embedded signatures...')}
+              onClick={async () => {
+                if (doc?.downloadUrl) {
+                  try {
+                    const res = await fetch(doc.downloadUrl, {
+                      headers: {
+                        'Authorization': `Bearer ${token}`
+                      }
+                    });
+                    if (!res.ok) throw new Error('Download failed');
+                    const blob = await res.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = objectUrl;
+                    link.setAttribute('download', doc.name);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(objectUrl);
+                  } catch (err) {
+                    console.error('Download error:', err);
+                    alert('Failed to download the document. Please try again.');
+                  }
+                } else {
+                  alert('No download copy available for this mockup document.');
+                }
+              }}
               className="btn-primary py-2.5 justify-center shadow-sm w-full"
             >
               <Download size={15} /> Download Copy
@@ -229,73 +354,91 @@ export default function DocumentComplete() {
 
         {/* Visual Signed Document Canvas (Right Panel) */}
         {doc && (
-          <div className="flex-1 w-full max-w-2xl flex flex-col bg-surface-container-low border border-outline-variant/60 rounded-xl shadow-md overflow-hidden p-6 self-stretch">
+          <div ref={containerRef} className="flex-1 w-full max-w-2xl flex flex-col bg-surface-container-low border border-outline-variant/60 rounded-xl shadow-md overflow-hidden p-6 self-stretch">
             <h2 className="text-sm font-bold text-on-surface mb-3 flex items-center gap-1.5">
               <Shield size={14} className="text-emerald-600" /> Locked Signed Copy Preview
             </h2>
             
-            {/* The Document Page Canvas */}
-            <div 
-              className="relative bg-white text-slate-900 border border-outline-variant/60 rounded-lg shadow-sm flex flex-col select-none"
-              style={{ 
-                width: pdfDimensions ? `${pdfDimensions.width}px` : '100%',
+            {/* The Document Page Canvas
+                 IMPORTANT: marker.x/y/width/height are stored at PREVIEW_SCALE=1.2 (same
+                 scale used in DocumentEditor). We render the PDF at the same PREVIEW_SCALE so
+                 the canvas CSS dimensions match the stored coordinate space exactly — no
+                 conversion factor is needed.  The canvas IS the first positioned ancestor of
+                 the overlay divs (they are siblings inside a `position:relative` wrapper that
+                 is sized to match the canvas exactly), so (0,0) of the overlays == top-left
+                 corner of the PDF canvas.
+            */}
+            <div
+              className="relative bg-white text-slate-900 border border-outline-variant/60 rounded-lg shadow-sm select-none overflow-hidden"
+              style={{
+                // Size the container exactly to the rendered canvas CSS dimensions.
+                // Before the PDF loads, use a sensible A4-ish placeholder.
+                width:  pdfDimensions ? `${displayWidth}px`  : '100%',
                 maxWidth: '100%',
-                height: pdfDimensions ? `${pdfDimensions.height}px` : '520px',
-                minHeight: pdfDimensions ? `${pdfDimensions.height}px` : '520px'
+                height: pdfDimensions ? `${displayHeight}px` : '520px',
               }}
             >
-              <div 
-                className="flex-1 relative overflow-hidden bg-white" 
-                style={{ 
-                  width: '100%',
-                  height: '100%',
-                  padding: doc.downloadUrl ? '0' : '2.5rem'
-                }}
-              >
-                
-                {/* Visual Contract Details */}
-                {doc.downloadUrl ? (
-                  <PDFViewer 
-                    url={doc.downloadUrl} 
-                    page={1} 
-                    onLoadSuccess={handlePdfLoadSuccess}
-                    scale={1.2}
-                  />
-                ) : (
-                  renderDocumentMockup()
-                )}
+              {doc.downloadUrl ? (
+                // Direct canvas — no extra wrapper div, no flex centering, no bg-slate-50.
+                // The canvas top-left IS (0,0) for every absolutely-positioned overlay.
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    display: 'block',
+                    // Canvas fills the container; CSS w/h are scaled to fit container nicely.
+                    width: pdfDimensions ? `${displayWidth}px`  : '100%',
+                    height: pdfDimensions ? `${displayHeight}px` : '100%',
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full" style={{ padding: '2.5rem' }}>
+                  {renderDocumentMockup()}
+                </div>
+              )}
 
-                {/* Overlaid Placed Signatures */}
-                {doc.markers?.filter(m => m.page === 1).map(marker => (
+              {/* Overlaid Placed Signatures
+                  Markers are stored at PREVIEW_SCALE=1.2; the canvas is rendered at the same
+                  scale, so we apply coordinates directly (scale factor = 1.0).
+                  The parent `overflow-hidden` clips any out-of-bounds signature as a safety net.
+              */}
+              {(doc.status !== 'locked' || !doc.downloadUrl) && doc.markers?.filter(m => m.page === 1).map(marker => {
+                // Guard: skip markers with invalid/NaN coordinates
+                if (!isFinite(marker.x) || !isFinite(marker.y) ||
+                    !isFinite(marker.width) || !isFinite(marker.height)) {
+                  return null
+                }
+                const pageW = pdfDimensions?.width  ?? 0
+                const pageH = pdfDimensions?.height ?? 0
+                // Clamp to page bounds so a corrupt coordinate can't escape the container
+                const clampedX = pageW > 0 ? Math.max(0, Math.min(pageW - marker.width,  marker.x)) : marker.x
+                const clampedY = pageH > 0 ? Math.max(0, Math.min(pageH - marker.height, marker.y)) : marker.y
+
+                return (
                   <div
                     key={marker.id}
                     className={`absolute flex flex-col justify-center items-center select-none pointer-events-none ${
                       marker.signed ? '' : 'border border-outline-variant/60 rounded-xl bg-surface-container-lowest/95 px-3 py-1.5 shadow-md'
                     }`}
                     style={{
-                      left: `${marker.x}px`,
-                      top: `${marker.y}px`,
-                      width: `${marker.width}px`,
+                      left:   `${clampedX}px`,
+                      top:    `${clampedY}px`,
+                      width:  `${marker.width}px`,
                       height: `${marker.height}px`,
                     }}
                   >
                     {marker.signed ? (
                       <div className="flex items-center justify-center w-full h-full overflow-hidden">
                         {marker.signature ? (
-                          <img 
-                            src={marker.signature} 
-                            alt="Sig" 
-                            className="w-full h-full object-contain" 
+                          <img
+                            src={marker.signature}
+                            alt="Sig"
+                            className="w-full h-full object-contain"
                           />
                         ) : (
                           <span className="text-[10px] font-bold text-stone-800 leading-tight font-mono">
                             {marker.assignedTo.initials}
                           </span>
                         )}
-                        <div className="hidden">
-                          <span className="font-bold">Signed</span>
-                          <span className="font-mono mt-0.5">✓ Secure</span>
-                        </div>
                       </div>
                     ) : (
                       <div className="text-[9px] font-bold text-on-surface-variant flex flex-col items-center">
@@ -304,8 +447,8 @@ export default function DocumentComplete() {
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
+                )
+              })}
             </div>
           </div>
         )}

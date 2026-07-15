@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Loader2 } from 'lucide-react';
+import { useApp } from '../context/AppContext';
 
 // Configure the worker source using unpkg CDN matching the installed version
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -17,6 +18,7 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
   const [loading, setLoading] = useState(true);
   const [pdf, setPdf] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token } = useApp();
 
   // Load PDF document
   useEffect(() => {
@@ -24,17 +26,43 @@ export default function PDFViewer({ url, page, onLoadSuccess, scale = 1.25 }: PD
     setLoading(true);
     setError(null);
 
-    const loadingTask = pdfjsLib.getDocument({ url });
-    loadingTask.promise
-      .then((loadedPdf) => {
+    let objectUrl = '';
+    let isCancelled = false;
+
+    const fetchPdf = async () => {
+      try {
+        const headers: HeadersInit = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const blob = await res.blob();
+        if (isCancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+
+        const loadingTask = pdfjsLib.getDocument({ url: objectUrl });
+        const loadedPdf = await loadingTask.promise;
+        if (isCancelled) return;
         setPdf(loadedPdf);
-      })
-      .catch((err) => {
-        console.error('Error loading PDF:', err);
-        setError('Failed to load PDF document.');
-        setLoading(false);
-      });
-  }, [url]);
+      } catch (err: any) {
+        if (!isCancelled) {
+          console.error('Error loading PDF:', err);
+          setError('Failed to load PDF document.');
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchPdf();
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [url, token]);
 
   const renderTaskRef = useRef<any>(null);
 

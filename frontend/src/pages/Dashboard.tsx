@@ -13,17 +13,48 @@ import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
 function StatusBadge({ status }: { status: Document['status'] }) {
   const map: Record<Document['status'], React.ReactNode> = {
     draft:             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>,
-    pending_supervisor:<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending</span>,
-    pending_manager:   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending</span>,
+    pending_supervisor:<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending Supervisor</span>,
+    pending_manager:   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Pending Manager</span>,
     signed:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Signed</span>,
-    locked:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Completed</span>,
+    locked:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">Completed</span>,
     rejected:          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-800 border border-red-200">Rejected</span>,
   }
   return <>{map[status]}</>
 }
 
+function getSigningProgress(doc: Document) {
+  const signatureMarkers = doc.markers ? doc.markers.filter(m => m.type === 'signature') : []
+  
+  if (signatureMarkers.length > 0) {
+    const totalUsers = Array.from(new Set(signatureMarkers.map(m => m.assignedTo.id)))
+    const signedUsers = totalUsers.filter(userId => {
+      const userMarkers = signatureMarkers.filter(m => m.assignedTo.id === userId)
+      return userMarkers.every(m => m.signed)
+    })
+    return {
+      signed: signedUsers.length,
+      total: totalUsers.length
+    }
+  }
+
+  // Fallback to recipients (e.g. for mock data without markers)
+  const totalRecipients = doc.recipients ? doc.recipients.length : 0
+  if (totalRecipients > 0) {
+    let signed = 0
+    if (doc.status === 'locked' || doc.status === 'signed') {
+      signed = totalRecipients
+    } else if (doc.status === 'pending_manager') {
+      // Supervisor has signed, Manager has not.
+      signed = 1
+    }
+    return { signed, total: totalRecipients }
+  }
+
+  return { signed: 0, total: 0 }
+}
+
 export default function Dashboard() {
-  const { documents, currentUser, addDocument, refreshDocuments } = useApp()
+  const { documents, currentUser, addDocument, refreshDocuments, token } = useApp()
   const [showUpload, setShowUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'signed' | 'pending'>('all')
   const navigate = useNavigate()
@@ -54,6 +85,9 @@ export default function Dashboard() {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
       const res = await fetch(`${apiBase}/documents/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData
       })
 
@@ -180,7 +214,20 @@ export default function Dashboard() {
                       </div>
                     </td>
                     <td className="table-cell px-4">
-                      <StatusBadge status={doc.status} />
+                      <div className="flex flex-col items-start gap-1">
+                        <StatusBadge status={doc.status} />
+                        {(() => {
+                          const { signed, total } = getSigningProgress(doc)
+                          if (total > 0) {
+                            return (
+                              <span className="text-[10px] text-on-surface-variant/60 font-medium">
+                                {signed} of {total} signed
+                              </span>
+                            )
+                          }
+                          return null
+                        })()}
+                      </div>
                     </td>
                     <td className="table-cell px-4">
                       <div className="flex items-center gap-2">

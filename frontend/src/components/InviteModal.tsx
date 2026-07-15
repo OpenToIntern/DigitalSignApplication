@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import {
   X, Users, Lock, Mail, AlertCircle, CheckCircle, RefreshCw,
   ArrowDown, ArrowUp, Trash2, Plus
 } from 'lucide-react'
 import type { User } from '../types'
-import { MANAGER_USER, SUPERVISOR_USER } from '../constants/mockData'
+import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
 
 interface InviteModalProps {
   documentName: string
@@ -49,6 +49,15 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
   const [name, setName] = useState('')
   const [accessRole, setAccessRole] = useState<User['accessRole']>('supervisor')
   const [error, setError] = useState<string | null>(null)
+
+  // Lock background page scroll when modal is mounted, and restore on unmount
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [])
 
   const hasSupervisor = signatories.some(s => s.accessRole === 'supervisor')
   const hasManager = signatories.some(s => s.accessRole === 'manager')
@@ -107,7 +116,7 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
           role: nextRole === 'manager' ? 'Manager' : 'Supervisor',
           avatarColor: nextRole === 'manager' ? '#ec4899' : '#8b5cf6',
         }
-        : s
+          : s
     )))
   }
 
@@ -126,8 +135,12 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content max-w-2xl bg-white border border-outline-variant p-6 sm:p-8 text-left">
-        <div className="flex items-center justify-between mb-5">
+      <div 
+        className="modal-content max-w-2xl bg-white border border-outline-variant p-6 sm:p-8 text-left flex flex-col"
+        style={{ maxHeight: '90vh' }}
+      >
+        {/* 1. FIXED HEADER */}
+        <div className="flex items-center justify-between mb-5 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
               <Users size={20} className="text-primary" />
@@ -142,142 +155,150 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3 mb-3">
-          <input
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') addSigner()
-            }}
-            className="input-field"
-            placeholder="signer@company.com"
-            type="email"
-          />
-          <select
-            value={accessRole}
-            onChange={e => setAccessRole(e.target.value as User['accessRole'])}
-            className="input-field"
-          >
-            <option value="supervisor">Supervisor</option>
-            <option value="manager">Manager</option>
-          </select>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 mb-4">
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="input-field"
-            placeholder="Full name"
-          />
-          <button onClick={addSigner} className="btn-secondary justify-center">
-            <Plus size={15} /> Add
-          </button>
-        </div>
-
-        {error && (
-          <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
-            <AlertCircle size={13} className="flex-shrink-0" />
-            {error}
+        {/* 2. SCROLLABLE BODY */}
+        <div className="flex-1 overflow-y-auto pr-1 mb-5 space-y-4 border-y border-outline-variant/30 py-4 text-left">
+          
+          {/* Signer inputs form fields */}
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3">
+            <input
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') addSigner()
+              }}
+              className="input-field"
+              placeholder="signer@company.com"
+              type="email"
+            />
+            <select
+              value={accessRole}
+              onChange={e => setAccessRole(e.target.value as User['accessRole'])}
+              className="input-field"
+            >
+              <option value="supervisor">Supervisor</option>
+              <option value="manager">Manager</option>
+            </select>
           </div>
-        )}
 
-        <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-          <AlertCircle size={13} className="flex-shrink-0" />
-          Signing follows this order. Manager access stays locked until the required supervisor signature is recorded.
-        </div>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="input-field"
+              placeholder="Full name"
+            />
+            <button onClick={addSigner} className="btn-secondary justify-center">
+              <Plus size={15} /> Add
+            </button>
+          </div>
 
-        <div className="space-y-3 mb-5 max-h-[300px] overflow-y-auto pr-1">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Signing Order</p>
-          {signatories.map((user, index) => {
-            const locked = index > 0
-            return (
-              <div
-                key={user.email}
-                className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 text-left ${
-                  locked
-                    ? 'border-outline-variant/60 bg-surface-container-low'
-                    : 'border-primary/20 bg-primary/5'
-                }`}
-              >
-                <div className="relative">
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
-                    style={{ backgroundColor: user.avatarColor }}
-                  >
-                    {user.initials}
-                  </div>
-                  <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm ${
-                    locked ? 'bg-surface-container-high text-on-surface-variant' : 'bg-primary text-white'
-                  }`}>
-                    {index + 1}
-                  </div>
-                </div>
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              <AlertCircle size={13} className="flex-shrink-0" />
+              {error}
+            </div>
+          )}
 
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-on-surface truncate">{user.name}</p>
-                  <p className="text-xs text-on-surface-variant truncate font-mono">{user.email}</p>
-                </div>
+          <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            <AlertCircle size={13} className="flex-shrink-0" />
+            Signing follows this order. Manager access stays locked until the required supervisor signature is recorded.
+          </div>
 
-                <select
-                  value={user.accessRole}
-                  onChange={e => updateSignerRole(user.email, e.target.value as User['accessRole'])}
-                  className="input-field py-1.5 px-2 text-xs w-28"
+          {/* Signing Order list */}
+          <div className="space-y-3">
+            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Signing Order</p>
+            {signatories.map((user, index) => {
+              const locked = index > 0
+              return (
+                <div
+                  key={user.email}
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 text-left ${
+                    locked
+                      ? 'border-outline-variant/60 bg-surface-container-low'
+                      : 'border-primary/20 bg-primary/5'
+                  }`}
                 >
-                  <option value="supervisor">SPV</option>
-                  <option value="manager">Manager</option>
-                </select>
+                  <div className="relative">
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
+                      style={{ backgroundColor: user.avatarColor }}
+                    >
+                      {user.initials}
+                    </div>
+                    <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm ${
+                      locked ? 'bg-surface-container-high text-on-surface-variant' : 'bg-primary text-white'
+                    }`}>
+                      {index + 1}
+                    </div>
+                  </div>
 
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => moveSigner(index, -1)}
-                    disabled={index === 0}
-                    className="p-1.5 rounded-lg hover:bg-surface-container disabled:opacity-30"
-                    title="Move up"
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-on-surface truncate">{user.name}</p>
+                    <p className="text-xs text-on-surface-variant truncate font-mono">{user.email}</p>
+                  </div>
+
+                  <select
+                    value={user.accessRole}
+                    onChange={e => updateSignerRole(user.email, e.target.value as User['accessRole'])}
+                    className="input-field py-1.5 px-2 text-xs w-28"
                   >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    onClick={() => moveSigner(index, 1)}
-                    disabled={index === signatories.length - 1}
-                    className="p-1.5 rounded-lg hover:bg-surface-container disabled:opacity-30"
-                    title="Move down"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                  <button
-                    onClick={() => removeSigner(user.email)}
-                    className="p-1.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-surface-container"
-                    title="Remove signer"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                    <option value="supervisor">SPV</option>
+                    <option value="manager">Manager</option>
+                  </select>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => moveSigner(index, -1)}
+                      disabled={index === 0}
+                      className="p-1.5 rounded-lg hover:bg-surface-container disabled:opacity-30"
+                      title="Move up"
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                    <button
+                      onClick={() => moveSigner(index, 1)}
+                      disabled={index === signatories.length - 1}
+                      className="p-1.5 rounded-lg hover:bg-surface-container disabled:opacity-30"
+                      title="Move down"
+                    >
+                      <ArrowDown size={14} />
+                    </button>
+                    <button
+                      onClick={() => removeSigner(user.email)}
+                      className="p-1.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-surface-container"
+                      title="Remove signer"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
 
-        <div className="p-3 rounded-xl bg-surface-container border border-outline-variant/40 mb-5 text-left">
-          <p className="text-xs font-semibold text-on-surface-variant mb-2 flex items-center gap-1.5">
-            <Mail size={12} className="text-primary" /> Email notification preview
-          </p>
-          <p className="text-xs text-on-surface-variant">{emailPreview}</p>
-          {signatories.length > 1 && (
-            <p className="text-[10px] text-on-surface-variant/70 mt-2 flex items-center gap-1">
-              <Lock size={11} /> Later signers are notified when their turn opens.
+          {/* Email Preview */}
+          <div className="p-3 rounded-xl bg-surface-container border border-outline-variant/40 text-left font-sans">
+            <p className="text-xs font-semibold text-on-surface-variant mb-2 flex items-center gap-1.5">
+              <Mail size={12} className="text-primary" /> Email notification preview
             </p>
+            <p className="text-xs text-on-surface-variant leading-relaxed">{emailPreview}</p>
+            {signatories.length > 1 && (
+              <p className="text-[10px] text-on-surface-variant/70 mt-2 flex items-center gap-1">
+                <Lock size={11} /> Later signers are notified when their turn opens.
+              </p>
+            )}
+          </div>
+
+          {sent && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
+              <CheckCircle size={14} className="flex-shrink-0" />
+              Invitations saved. Redirecting...
+            </div>
           )}
         </div>
 
-        {sent && (
-          <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
-            <CheckCircle size={14} className="flex-shrink-0" />
-            Invitations saved. Redirecting...
-          </div>
-        )}
-
-        <div className="flex gap-3">
+        {/* 3. FIXED FOOTER */}
+        <div className="flex gap-3 flex-shrink-0">
           <button onClick={onClose} disabled={sending || sent} className="btn-secondary flex-1">Cancel</button>
           <button onClick={handleSend} disabled={sending || sent || !canSend} className="btn-primary flex-1">
             {sending ? (

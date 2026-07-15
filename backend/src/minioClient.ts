@@ -1,5 +1,6 @@
 import { Client } from 'minio';
 import dotenv from 'dotenv';
+import { encryptBuffer, decryptBuffer } from './lib/fileEncryption';
 
 dotenv.config();
 
@@ -42,12 +43,13 @@ export async function uploadDocumentToMinio(
   fileBuffer: Buffer,
   metaData: Record<string, string>
 ): Promise<string> {
+  const encrypted = encryptBuffer(fileBuffer);
   return new Promise((resolve, reject) => {
     minioClient.putObject(
       BUCKET_NAME,
       fileKey,
-      fileBuffer,
-      fileBuffer.length,
+      encrypted,
+      encrypted.length,
       metaData,
       (err, objInfo) => {
         if (err) {
@@ -81,4 +83,24 @@ export async function getDocumentDownloadUrl(fileKey: string): Promise<string> {
   });
 }
 
-
+// Get document as a Buffer helper
+export async function getDocumentBufferFromMinio(fileKey: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    minioClient.getObject(BUCKET_NAME, fileKey, (err, stream) => {
+      if (err) {
+        return reject(err);
+      }
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      stream.on('error', (streamErr) => reject(streamErr));
+      stream.on('end', () => {
+        try {
+          const decrypted = decryptBuffer(Buffer.concat(chunks));
+          resolve(decrypted);
+        } catch (decryptErr) {
+          reject(decryptErr);
+        }
+      });
+    });
+  });
+}

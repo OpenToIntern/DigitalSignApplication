@@ -12,6 +12,9 @@ import DocumentComplete from './pages/DocumentComplete'
 import VerifyPage from './pages/VerifyPage'
 import AuditLogPage from './pages/AuditLogPage'
 import SettingsPage from './pages/SettingsPage'
+import AuthCallback from './pages/AuthCallback'
+import OtpVerification from './pages/OtpVerification'
+import NikVerification from './pages/NikVerification'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -42,6 +45,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/verify-otp" element={<OtpVerification />} />
+      <Route path="/verify-nik" element={<NikVerification />} />
       
       <Route
         path="/dashboard"

@@ -13,14 +13,45 @@ function StatusBadge({ status }: { status: Document['status'] }) {
     pending_supervisor:<span className="badge-pending">Pending Supervisor</span>,
     pending_manager:   <span className="badge-supervisor">Pending Manager</span>,
     signed:            <span className="badge-signed">Signed</span>,
-    locked:            <span className="badge-locked"><Lock size={10} /> Locked</span>,
+    locked:            <span className="badge-locked"><Lock size={10} /> Completed</span>,
     rejected:          <span className="badge-rejected">Rejected</span>,
   }
   return <>{map[status]}</>
 }
 
+function getSigningProgress(doc: Document) {
+  const signatureMarkers = doc.markers ? doc.markers.filter(m => m.type === 'signature') : []
+  
+  if (signatureMarkers.length > 0) {
+    const totalUsers = Array.from(new Set(signatureMarkers.map(m => m.assignedTo.id)))
+    const signedUsers = totalUsers.filter(userId => {
+      const userMarkers = signatureMarkers.filter(m => m.assignedTo.id === userId)
+      return userMarkers.every(m => m.signed)
+    })
+    return {
+      signed: signedUsers.length,
+      total: totalUsers.length
+    }
+  }
+
+  // Fallback to recipients (e.g. for mock data without markers)
+  const totalRecipients = doc.recipients ? doc.recipients.length : 0
+  if (totalRecipients > 0) {
+    let signed = 0
+    if (doc.status === 'locked' || doc.status === 'signed') {
+      signed = totalRecipients
+    } else if (doc.status === 'pending_manager') {
+      // Supervisor has signed, Manager has not.
+      signed = 1
+    }
+    return { signed, total: totalRecipients }
+  }
+
+  return { signed: 0, total: 0 }
+}
+
 export default function DocumentsPage() {
-  const { documents, addDocument, updateDocument, currentUser, refreshDocuments } = useApp()
+  const { documents, addDocument, updateDocument, currentUser, refreshDocuments, token } = useApp()
   const navigate = useNavigate()
   const [showUpload, setShowUpload] = useState(false)
   const [search, setSearch] = useState('')
@@ -49,6 +80,9 @@ export default function DocumentsPage() {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
       const res = await fetch(`${apiBase}/documents/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData
       })
 
@@ -115,7 +149,7 @@ export default function DocumentsPage() {
                 <option value="draft">Draft</option>
                 <option value="pending_supervisor">Pending Supervisor</option>
                 <option value="pending_manager">Pending Manager</option>
-                <option value="locked">Locked</option>
+                <option value="locked">Completed</option>
                 <option value="rejected">Rejected</option>
               </select>
             </div>
@@ -185,7 +219,20 @@ export default function DocumentsPage() {
                       <td className="table-cell px-4 hidden sm:table-cell text-on-surface-variant text-xs">{doc.category}</td>
                       <td className="table-cell px-4 hidden md:table-cell text-on-surface-variant/80 font-mono text-xs">{doc.size}</td>
                       <td className="table-cell px-4">
-                        <StatusBadge status={doc.status} />
+                        <div className="flex flex-col items-start gap-1">
+                          <StatusBadge status={doc.status} />
+                          {(() => {
+                            const { signed, total } = getSigningProgress(doc)
+                            if (total > 0) {
+                              return (
+                                <span className="text-[10px] text-on-surface-variant/60 font-medium">
+                                  {signed} of {total} signed
+                                </span>
+                              )
+                            }
+                            return null
+                          })()}
+                        </div>
                       </td>
                       <td className="table-cell px-4 hidden lg:table-cell text-on-surface-variant/80 text-xs font-mono">
                         {new Date(doc.uploadedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}

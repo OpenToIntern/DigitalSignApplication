@@ -1,17 +1,15 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenSquare, Clock, CheckCircle, XCircle, FileText, Eye, AlertCircle, Lock } from 'lucide-react'
+import { PenSquare, Clock, CheckCircle, FileText, Eye, AlertCircle, Lock } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import { useApp } from '../context/AppContext'
 import type { Document } from '../types'
 
 function ManagerDocCard({
   doc,
-  onReject,
   isLocked,
 }: {
   doc: Document
-  onReject: (doc: Document) => void
   isLocked: boolean
 }) {
   const navigate = useNavigate()
@@ -58,13 +56,6 @@ function ManagerDocCard({
           <Eye size={13} /> Review
         </button>
         <button
-          onClick={() => onReject(doc)}
-          disabled={isLocked}
-          className="btn-secondary text-xs flex-1 justify-center text-error border-error/30 hover:bg-error/5 disabled:opacity-40"
-        >
-          <XCircle size={13} /> Reject
-        </button>
-        <button
           onClick={() => navigate(`/documents/${doc.id}/editor`)}
           disabled={isLocked}
           className="btn-primary text-xs flex-1 justify-center disabled:opacity-40"
@@ -77,21 +68,12 @@ function ManagerDocCard({
 }
 
 export default function ManagerDashboard() {
-  const { documents, updateDocument } = useApp()
-  const [rejectingDoc, setRejectingDoc] = useState<Document | null>(null)
+  const { documents } = useApp()
   const navigate = useNavigate()
 
   const readyDocs = documents.filter(d => d.status === 'pending_manager')
   const lockedDocs = documents.filter(d => d.status === 'pending_supervisor')
   const completedDocs = documents.filter(d => d.status === 'locked' || d.status === 'signed')
-
-  const handleReject = (doc: Document) => setRejectingDoc(doc)
-
-  const handleRejectConfirm = () => {
-    if (!rejectingDoc) return
-    updateDocument(rejectingDoc.id, { status: 'rejected', updatedAt: new Date() })
-    setRejectingDoc(null)
-  }
 
   return (
     <AppLayout>
@@ -135,7 +117,7 @@ export default function ManagerDashboard() {
           ) : (
             <div className="space-y-4">
               {readyDocs.map(doc => (
-                <ManagerDocCard key={doc.id} doc={doc} onReject={handleReject} isLocked={false} />
+                <ManagerDocCard key={doc.id} doc={doc} isLocked={false} />
               ))}
             </div>
           )}
@@ -149,7 +131,7 @@ export default function ManagerDashboard() {
             </h2>
             <div className="space-y-4">
               {lockedDocs.map(doc => (
-                <ManagerDocCard key={doc.id} doc={doc} onReject={handleReject} isLocked={true} />
+                <ManagerDocCard key={doc.id} doc={doc} isLocked={true} />
               ))}
             </div>
           </div>
@@ -175,7 +157,7 @@ export default function ManagerDashboard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="badge-locked">Locked</span>
+                    <span className="badge-locked">Completed</span>
                     <button onClick={() => navigate(`/documents/${doc.id}/editor`)} className="btn-ghost text-xs py-1">
                       <Eye size={12} />
                     </button>
@@ -186,32 +168,6 @@ export default function ManagerDashboard() {
           </div>
         )}
       </div>
-
-      {/* Reject Confirm Modal */}
-      {rejectingDoc && (
-        <div className="modal-overlay">
-          <div className="modal-content max-w-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center text-error">
-                <XCircle size={20} />
-              </div>
-              <div>
-                <h3 className="font-display font-bold text-on-surface">Reject Document?</h3>
-                <p className="text-xs text-on-surface-variant">Halt the signature flow.</p>
-              </div>
-            </div>
-            <p className="text-xs text-on-surface-variant leading-relaxed mb-5">
-              Rejecting "<span className="text-on-surface font-semibold">{rejectingDoc.name}</span>" will halt the workflow and notify the Staff initiator.
-            </p>
-            <div className="flex gap-3">
-              <button onClick={() => setRejectingDoc(null)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleRejectConfirm} className="btn-danger flex-1">
-                Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </AppLayout>
   )
 }

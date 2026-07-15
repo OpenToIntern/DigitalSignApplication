@@ -1,12 +1,11 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PenSquare, Clock, CheckCircle, XCircle, FileText, Eye, AlertCircle } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
-import SignatureModal from '../components/SignatureModal'
 import { useApp } from '../context/AppContext'
-import type { Document, SignatureData } from '../types'
+import type { Document } from '../types'
 
-function DocCard({ doc, onSign, onReject }: { doc: Document; onSign: (doc: Document) => void; onReject: (doc: Document) => void }) {
+function DocCard({ doc }: { doc: Document }) {
   const navigate = useNavigate()
   return (
     <div className="glass-card p-5 hover:border-primary/40 transition-colors animate-slide-up">
@@ -40,13 +39,13 @@ function DocCard({ doc, onSign, onReject }: { doc: Document; onSign: (doc: Docum
           <Eye size={13} /> Review
         </button>
         <button
-          onClick={() => onReject(doc)}
+          onClick={() => navigate(`/documents/${doc.id}/editor`)}
           className="btn-secondary text-xs flex-1 justify-center text-error border-error/30 hover:bg-error/5"
         >
           <XCircle size={13} /> Reject
         </button>
         <button
-          onClick={() => onSign(doc)}
+          onClick={() => navigate(`/documents/${doc.id}/editor`)}
           className="btn-primary text-xs flex-1 justify-center"
         >
           <PenSquare size={13} /> Sign Now
@@ -57,45 +56,13 @@ function DocCard({ doc, onSign, onReject }: { doc: Document; onSign: (doc: Docum
 }
 
 export default function SupervisorDashboard() {
-  const { documents, updateDocument } = useApp()
-  const [signingDoc, setSigningDoc] = useState<Document | null>(null)
-  const [rejectingDoc, setRejectingDoc] = useState<Document | null>(null)
+  const { documents } = useApp()
   const navigate = useNavigate()
 
   const pendingDocs = documents.filter(d => d.status === 'pending_supervisor')
   const signedByMe = documents.filter(d =>
     d.status === 'pending_manager' || d.status === 'locked' || d.status === 'signed'
   )
-
-  const handleSign = (doc: Document) => setSigningDoc(doc)
-  const handleReject = (doc: Document) => setRejectingDoc(doc)
-
-  const handleSignConfirm = (sig: SignatureData) => {
-    if (!signingDoc) return
-    const updatedMarkers = (signingDoc.markers || []).map(m => {
-      if (m.assignedTo.accessRole === 'supervisor' && !m.signed) {
-        return {
-          ...m,
-          signed: true,
-          signature: sig.dataUrl,
-          signedAt: new Date(),
-        }
-      }
-      return m
-    })
-    updateDocument(signingDoc.id, {
-      status: 'pending_manager',
-      markers: updatedMarkers,
-      updatedAt: new Date(),
-    })
-    setSigningDoc(null)
-  }
-
-  const handleRejectConfirm = () => {
-    if (!rejectingDoc) return
-    updateDocument(rejectingDoc.id, { status: 'rejected', updatedAt: new Date() })
-    setRejectingDoc(null)
-  }
 
   return (
     <AppLayout>
@@ -139,7 +106,7 @@ export default function SupervisorDashboard() {
           ) : (
             <div className="space-y-4">
               {pendingDocs.map(doc => (
-                <DocCard key={doc.id} doc={doc} onSign={handleSign} onReject={handleReject} />
+                <DocCard key={doc.id} doc={doc} />
               ))}
             </div>
           )}
@@ -180,40 +147,6 @@ export default function SupervisorDashboard() {
           </div>
         )}
       </div>
-
-      {/* Sign modal */}
-      {signingDoc && (
-        <SignatureModal
-          onConfirm={handleSignConfirm}
-          onClose={() => setSigningDoc(null)}
-        />
-      )}
-
-      {/* Reject Confirm Modal */}
-      {rejectingDoc && (
-        <div className="modal-overlay">
-          <div className="modal-content max-w-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center text-error">
-                <XCircle size={20} />
-              </div>
-              <div>
-                <h3 className="font-display font-bold text-on-surface">Reject Document?</h3>
-                <p className="text-xs text-on-surface-variant">Halt the signature flow.</p>
-              </div>
-            </div>
-            <p className="text-xs text-on-surface-variant leading-relaxed mb-5">
-              Rejecting "<span className="text-on-surface font-semibold">{rejectingDoc.name}</span>" will halt the sequential signing flow and notify the Staff initiator.
-            </p>
-            <div className="flex gap-3">
-              <button onClick={() => setRejectingDoc(null)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleRejectConfirm} className="btn-danger flex-1">
-                Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </AppLayout>
   )
 }

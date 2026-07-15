@@ -5,7 +5,7 @@ import { CURRENT_USER } from '../constants/mockData'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-function normalizeUser(user: any): User {
+export function normalizeUser(user: any): User {
   const name = user?.name || user?.email?.split('@')[0] || 'Signer'
   const initials = user?.initials || name
     .split(' ')
@@ -29,16 +29,18 @@ function normalizeUser(user: any): User {
 }
 
 interface AppContextValue extends AppState {
-  documents: Document[]
-  loading: boolean
-  refreshDocuments: () => Promise<void>
-  setCurrentUser: (user: User | null) => void
-  setIsAuthenticated: (v: boolean) => void
-  setMfaVerified: (v: boolean) => void
-  setDukcapilVerified: (v: boolean) => void
-  addDocument: (doc: Document) => void
-  updateDocument: (id: string, updates: Partial<Document>) => Promise<void>
-  logout: () => void
+  token: string | null;
+  setToken: (t: string | null) => void;
+  documents: Document[];
+  loading: boolean;
+  refreshDocuments: () => Promise<void>;
+  setCurrentUser: (user: User | null) => void;
+  setIsAuthenticated: (v: boolean) => void;
+  setMfaVerified: (v: boolean) => void;
+  setDukcapilVerified: (v: boolean) => void;
+  addDocument: (doc: Document) => void;
+  updateDocument: (id: string, updates: Partial<Document>) => Promise<Document | undefined>;
+  logout: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -93,23 +95,30 @@ function mapApiDocToFrontendDoc(doc: any): Document {
       ip: l.ip,
       documentId: l.documentId,
       documentName: l.documentName
-    }))
+    })),
+    rejectionComment: doc.rejectionComment
   };
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(CURRENT_USER)
-  const [isAuthenticated, setIsAuthenticated] = useState(true)
-  const [mfaVerified, setMfaVerified] = useState(true)
-  const [dukcapilVerified, setDukcapilVerified] = useState(true)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [mfaVerified, setMfaVerified] = useState(false)
+  const [dukcapilVerified, setDukcapilVerified] = useState(false)
+  const [token, setToken] = useState<string | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
 
   // Fetch documents from backend API
   const refreshDocuments = async () => {
+    if (!token) return
     try {
       setLoading(true)
-      const res = await fetch(`${API_BASE_URL}/documents`)
+      const res = await fetch(`${API_BASE_URL}/documents`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
       if (!res.ok) throw new Error('Failed to fetch documents')
       const data = await res.json()
       setDocuments(data.map(mapApiDocToFrontendDoc))
@@ -120,11 +129,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      refreshDocuments()
+  // Silent refresh: same fetch but skips setLoading to avoid UI flashes
+  // during background polling (won't reset scroll, close dropdowns, etc.)
+  const silentRefreshDocuments = async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/documents`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (!res.ok) throw new Error('Failed to fetch documents')
+      const data = await res.json()
+      setDocuments(data.map(mapApiDocToFrontendDoc))
+    } catch (error) {
+      console.error('Error polling documents from backend:', error)
     }
-  }, [isAuthenticated])
+  }
+
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      refreshDocuments()
+      // Poll every 30 seconds (same cadence as notification polling in AppLayout)
+      const interval = setInterval(silentRefreshDocuments, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [isAuthenticated, token])
 
   const addDocument = (doc: Document) => {
     // Frontend component adds a document locally first, or we refresh
@@ -175,10 +205,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }));
       }
 
+      if (updates.rejectionComment !== undefined) {
+        payload.rejectionComment = updates.rejectionComment;
+      }
+
       const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
       })
@@ -188,14 +223,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const updatedDoc = mapApiDocToFrontendDoc(updatedDocRaw)
 
       setDocuments(prev => prev.map(d => d.id === id ? updatedDoc : d))
+      return updatedDoc
     } catch (error) {
       console.error('Error updating document on backend:', error)
       // Fallback local update if backend fails
-      setDocuments(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d))
+      const fallbackDoc = { ...documents.find(d => d.id === id), ...updates } as Document
+      setDocuments(prev => prev.map(d => d.id === id ? fallbackDoc : d))
+      return fallbackDoc
     }
   }
 
   const logout = () => {
+    setToken(null)
     setCurrentUser(null)
     setIsAuthenticated(false)
     setMfaVerified(false)
@@ -208,6 +247,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       mfaVerified,
       dukcapilVerified,
+      token,
+      setToken,
       documents,
       loading,
       refreshDocuments,

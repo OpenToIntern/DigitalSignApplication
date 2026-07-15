@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   FileText, ChevronLeft, ChevronRight, Users, Plus, Send,
-  PenSquare, Lock, Calendar, Eye, ZoomIn, ZoomOut, RotateCcw, RotateCw
+  PenSquare, Lock, Calendar, Eye, ZoomIn, ZoomOut, RotateCcw, RotateCw, XCircle
 } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import SignatureModal from '../components/SignatureModal'
@@ -29,6 +29,7 @@ export default function DocumentEditor() {
   const [showInvite, setShowInvite] = useState(false)
   const [showSign, setShowSign] = useState(false)
   const [activeMarkerToSign, setActiveMarkerToSign] = useState<Marker | null>(null)
+  const [pendingSignature, setPendingSignature] = useState<SignatureData | null>(null)
   
   // Assignee selector state
   const [assignedUser, setAssignedUser] = useState<User>(SUPERVISOR_USER)
@@ -47,6 +48,10 @@ export default function DocumentEditor() {
   const [resizingId, setResizingId] = useState<string | null>(null)
   const [resizeStartDims, setResizeStartDims] = useState({ width: 0, height: 0 })
   const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 })
+
+  // Rejection states
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false)
+  const [rejectionReason, setRejectionReason] = useState('')
 
   // Panning/Scrolling states
   const [isPanning, setIsPanning] = useState(false)
@@ -334,7 +339,7 @@ export default function DocumentEditor() {
       return
     }
 
-    const isAssigned = marker.assignedTo.accessRole === currentUser?.accessRole
+    const isAssigned = marker.assignedTo.id === currentUser?.id
     const isSupervisorTurn = canSupervisorSign && marker.assignedTo.accessRole === 'supervisor'
     const isManagerTurn = canManagerSign && marker.assignedTo.accessRole === 'manager'
 
@@ -346,7 +351,7 @@ export default function DocumentEditor() {
     }
   }
 
-  const handleSignConfirm = (sig: SignatureData) => {
+  const handleSignConfirm = async (sig: SignatureData) => {
     if (!activeMarkerToSign) return
 
     const now = new Date()
@@ -363,7 +368,7 @@ export default function DocumentEditor() {
             signerId: currentUser?.id,
             signerEmail: currentUser?.email,
             timestamp: now.toISOString(),
-            ip: '192.168.1.108',
+            ip: 'server-injected',
             certId,
             algorithm: 'SHA-256',
             baselineHash: doc.baselineHash || 'a1b2c3d4...',
@@ -384,7 +389,7 @@ export default function DocumentEditor() {
         event: 'DOCUMENT_SIGNED',
         user: currentUser!,
         timestamp: now,
-        ip: '192.168.1.108',
+        ip: 'server-injected',
         documentId: doc.id,
         documentName: doc.name,
         metadata: { certId, algorithm: 'SHA-256' },
@@ -408,7 +413,7 @@ export default function DocumentEditor() {
       })
     }
 
-    updateDocument(doc.id, {
+    await updateDocument(doc.id, {
       markers: updatedMarkers,
       status: nextStatus,
       auditLog: newAuditLog,
@@ -420,9 +425,57 @@ export default function DocumentEditor() {
     }
   }
 
+  const handleRejectConfirm = () => {
+    if (!doc) return
+    const now = new Date()
+    updateDocument(doc.id, {
+      status: 'rejected',
+      updatedAt: now,
+      rejectionComment: rejectionReason,
+      auditLog: [
+        ...(doc.auditLog || []),
+        {
+          id: `al-${Date.now()}`,
+          event: 'DOCUMENT_REJECTED',
+          user: currentUser!,
+          timestamp: now,
+          ip: 'server-injected',
+          documentId: doc.id,
+          documentName: doc.name,
+          metadata: { reason: rejectionReason }
+        }
+      ]
+    })
+    setShowRejectConfirm(false)
+    navigate('/dashboard')
+  }
+
   const handleSendWorkflow = () => {
-    if (markers.length === 0) return
+    if (markers.length === 0 || doc.status === 'rejected') return
     setShowInvite(true)
+  }
+
+  const handleResubmit = () => {
+    if (markers.length === 0) return
+    const now = new Date()
+    updateDocument(doc.id, {
+      status: 'pending_supervisor',
+      markers: markers,
+      auditLog: [
+        ...(doc.auditLog || []),
+        {
+          id: `al-${Date.now()}`,
+          event: 'SIGNATURE_MARKERS_PLACED',
+          user: currentUser!,
+          timestamp: now,
+          ip: '192.168.1.108',
+          documentId: doc.id,
+          documentName: doc.name,
+          metadata: { action: 'Resubmitted document after rejection' }
+        }
+      ]
+    })
+    navigate('/documents')
   }
 
   const handleInviteConfirm = (selectedSignatories: User[]) => {
@@ -471,6 +524,8 @@ export default function DocumentEditor() {
 
   const deleteMarker = (mid: string) => {
     if (!canPlaceMarkers) return
+    const marker = markers.find(m => m.id === mid)
+    if (marker?.signed) return
     const updated = markers.filter(m => m.id !== mid)
     markersRef.current = updated
     setMarkers(updated)
@@ -599,21 +654,48 @@ export default function DocumentEditor() {
           <span className="text-xs font-semibold text-on-surface truncate max-w-[240px]">{doc.name}</span>
         </div>
         <div className="flex items-center gap-3">
+          {canSupervisorSign && (
+            <button
+              onClick={() => {
+                setRejectionReason('')
+                setShowRejectConfirm(true)
+              }}
+              className="btn-secondary py-2 px-4 text-xs font-bold text-error border-error/30 hover:bg-error/5"
+            >
+              <XCircle size={14} /> Reject Document
+            </button>
+          )}
           <button className="btn-ghost text-xs font-bold gap-1">
             <Eye size={14} /> PREVIEW
           </button>
           {canPlaceMarkers && (
             <button
-              onClick={handleSendWorkflow}
+              onClick={doc.status === 'rejected' ? handleResubmit : handleSendWorkflow}
               disabled={markers.length === 0}
               className="btn-primary py-2 px-4 text-xs font-bold"
             >
-              Next: Add Recipients <ChevronRight size={14} />
+              {doc.status === 'rejected' ? (
+                'Resubmit Document'
+              ) : (
+                <>
+                  Next: Add Recipients <ChevronRight size={14} />
+                </>
+              )}
             </button>
           )}
         </div>
       </div>
 
+      {doc.status === 'rejected' && doc.rejectionComment && (
+        <div id="rejection-banner" className="bg-error/10 border-b border-error/20 px-6 py-3 text-xs text-error flex items-start gap-2.5">
+          <XCircle size={16} className="text-error mt-0.5 flex-shrink-0" />
+          <div>
+            <span className="font-bold">Document Rejected:</span>{" "}
+            <span className="italic text-on-surface">"{doc.rejectionComment}"</span>
+          </div>
+        </div>
+      )}
+ 
       <div className="flex flex-1 h-[calc(100vh-7rem)] overflow-hidden">
         {/* Editor Main Canvas */}
         <div 
@@ -660,10 +742,10 @@ export default function DocumentEditor() {
 
               {/* Render Dragged / Placed Node Markers */}
               {markers.filter(m => m.page === activePage).map(marker => {
-                const isAssignedToCurrent = marker.assignedTo.accessRole === currentUser?.accessRole
-                const isClickable = isAssignedToCurrent && !marker.signed &&
-                  ((canSupervisorSign && marker.assignedTo.accessRole === 'supervisor') ||
-                   (canManagerSign && marker.assignedTo.accessRole === 'manager'))
+                 const isAssignedToCurrent = marker.assignedTo.id === currentUser?.id
+                 const isClickable = isAssignedToCurrent && !marker.signed &&
+                   ((canSupervisorSign && marker.assignedTo.accessRole === 'supervisor') ||
+                    (canManagerSign && marker.assignedTo.accessRole === 'manager'))
 
                 const scaleFactor = getScaleFactor()
                 const visualX = Math.round(marker.x * scaleFactor)
@@ -714,6 +796,7 @@ export default function DocumentEditor() {
                         </div>
                         {canPlaceMarkers && (
                           <button
+                            onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => { e.stopPropagation(); deleteMarker(marker.id) }}
                             className="p-0.5 text-on-surface-variant hover:text-error rounded hover:bg-surface-container flex-shrink-0"
                           >
@@ -805,9 +888,6 @@ export default function DocumentEditor() {
               <div className="space-y-3">
                 {[
                   { type: 'signature' as const, label: 'Signature', sub: 'Click to sign', icon: '' },
-                  { type: 'initials' as const, label: 'Initials', sub: 'Small signature', icon: '' },
-                  { type: 'date' as const, label: 'Date Signed', sub: 'Auto-filled date', icon: '' },
-                  { type: 'text' as const, label: 'Text Input', sub: 'Custom text field', icon: 'Tt' },
                 ].map(field => (
                   <button
                     key={field.type}
@@ -866,7 +946,7 @@ export default function DocumentEditor() {
           </div>
 
           {/* Add Recipient bottom action */}
-          {canPlaceMarkers && (
+          {canPlaceMarkers && doc.status !== 'rejected' && (
             <div className="p-5 border-t border-outline-variant/40">
               <button
                 onClick={() => setShowInvite(true)}
@@ -880,7 +960,7 @@ export default function DocumentEditor() {
       </div>
 
       {/* Invite Signatories Modal */}
-      {showInvite && (
+      {showInvite && doc.status !== 'rejected' && (
         <InviteModal
           documentName={doc.name}
           initialSignatories={signatories}
@@ -892,9 +972,95 @@ export default function DocumentEditor() {
       {/* Signature Draw Modal */}
       {showSign && (
         <SignatureModal
-          onConfirm={handleSignConfirm}
+          onConfirm={(sig) => {
+            setShowSign(false)
+            setPendingSignature(sig)
+          }}
           onClose={() => setShowSign(false)}
         />
+      )}
+
+      {/* Confirm Signature Dialog */}
+      {pendingSignature && (
+        <div className="modal-overlay">
+          <div className="modal-content max-w-md bg-white border border-outline-variant p-6 rounded-2xl shadow-xl text-center flex flex-col gap-4">
+            <h3 className="text-lg font-bold text-on-surface">Confirm Your Signature</h3>
+            <p className="text-xs text-on-surface-variant leading-relaxed text-left">
+              Are you sure you want to apply this signature to the document? This action is legally binding and will be permanently recorded in the document audit trail.
+            </p>
+            
+            {/* Signature Preview */}
+            <div className="border border-outline-variant/60 rounded-xl bg-slate-50 p-4 flex items-center justify-center h-28">
+              <img
+                src={pendingSignature.dataUrl}
+                alt="Signature Preview"
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+            
+            <div className="flex gap-3 mt-2">
+              <button
+                onClick={() => setPendingSignature(null)}
+                className="btn-secondary flex-1"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={async () => {
+                  const sig = pendingSignature
+                  setPendingSignature(null)
+                  await handleSignConfirm(sig)
+                }}
+                className="btn-primary flex-1 justify-center animate-pulse"
+              >
+                Confirm & Sign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Confirmation Modal */}
+      {showRejectConfirm && (
+        <div className="modal-overlay">
+          <div className="modal-content max-w-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center text-error">
+                <XCircle size={20} />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-on-surface">Reject Document?</h3>
+                <p className="text-xs text-on-surface-variant">Halt the signature flow.</p>
+              </div>
+            </div>
+            <p className="text-xs text-on-surface-variant leading-relaxed mb-4">
+              Rejecting "<span className="text-on-surface font-semibold">{doc.name}</span>" will halt the sequential signing flow and notify the Staff initiator.
+            </p>
+            <div className="mb-5">
+              <label htmlFor="rejection-reason" className="block text-[10px] uppercase tracking-wider font-bold text-on-surface-variant mb-1.5">
+                Reason for Rejection (Required)
+              </label>
+              <textarea
+                id="rejection-reason"
+                className="w-full text-xs p-2.5 rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface focus:outline-none focus:border-error resize-none h-20"
+                placeholder="Enter the reason why you are rejecting this document..."
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowRejectConfirm(false)} className="btn-secondary flex-1">Cancel</button>
+              <button
+                id="confirm-reject-btn"
+                onClick={handleRejectConfirm}
+                disabled={!rejectionReason.trim()}
+                className="btn-danger flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </AppLayout>
   )
