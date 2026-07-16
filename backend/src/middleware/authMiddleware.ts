@@ -1,15 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is not defined in the environment variables. Refusing to start with an insecure default.`);
-  }
-  return value;
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is not defined in the environment variables. Refusing to start with an insecure default.');
 }
-
-const JWT_SECRET = requireEnv('JWT_SECRET');
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -35,7 +30,7 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: 
   const token = parts[1];
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; role?: string; mfaPending?: boolean; nikPending?: boolean };
+    const decoded = jwt.verify(token, JWT_SECRET!) as { userId: string; role?: string; mfaPending?: boolean; nikPending?: boolean };
     if (decoded.mfaPending) {
       res.status(403).json({ error: 'Access denied: MFA verification pending.' });
       return;
