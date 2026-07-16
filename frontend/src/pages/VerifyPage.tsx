@@ -1,9 +1,9 @@
 import React, { useState, useRef } from 'react'
-import { Upload, FileText, CheckCircle, AlertTriangle, ShieldCheck, ShieldX, Info, RefreshCw } from 'lucide-react'
+import { Upload, FileText, ShieldCheck, ShieldX, Info, RefreshCw } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import VerificationModal from '../components/VerificationModal'
+import { useApp } from '../context/AppContext'
 import type { VerificationResult } from '../types'
-import { MOCK_USERS } from '../constants/mockData'
 
 export default function VerifyPage() {
   const [dragOver, setDragOver] = useState(false)
@@ -41,41 +41,38 @@ export default function VerifyPage() {
     setResult(null)
   }
 
+  const { token } = useApp()
+
   const triggerVerification = async () => {
     if (!file) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 2000))
-    setLoading(false)
+    setError('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
 
-    const isTampered = file.name.toLowerCase().includes('tampered') || file.name.toLowerCase().includes('corrupt')
-    
-    const storedHash = 'a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890'
-    const computedHash = isTampered 
-      ? 'f9e8d7c6b5a43210f9e8d7c6b5a43210f9e8d7c6b5a43210f9e8d7c6b5a43210'
-      : storedHash
-
-    setResult({
-      valid: !isTampered,
-      documentName: file.name,
-      storedHash,
-      computedHash,
-      signers: [
-        {
-          user: MOCK_USERS[1],
-          signedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-          certId: 'CERT-SUP-2026-001',
-          ip: '192.168.1.102',
-          valid: true,
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+      const res = await fetch(`${apiBase}/documents/verify`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
         },
-        {
-          user: MOCK_USERS[2],
-          signedAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-          certId: 'CERT-MGR-2026-001',
-          ip: '10.0.0.45',
-          valid: !isTampered,
-        }
-      ]
-    })
+        body: formData
+      })
+
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Verification failed')
+      }
+
+      const data = await res.json()
+      setResult(data)
+    } catch (err: any) {
+      console.error('Verification error:', err)
+      setError(err.message || 'Error verifying document signature.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const reset = () => {
@@ -163,10 +160,11 @@ export default function VerifyPage() {
 
         {/* Instructions */}
         <div className="p-4 bg-surface-container border border-outline-variant/40 rounded-xl">
-          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">PoC Testing Instructions</p>
+          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">How Verification Works</p>
           <ul className="text-xs text-on-surface-variant/80 space-y-1.5 list-disc list-inside">
-            <li>Upload any PDF. By default, verification will succeed (hashes match).</li>
-            <li>Rename the file to include the word <code className="text-primary font-bold bg-primary/10 px-1 rounded">"tampered"</code> or <code className="text-primary font-bold bg-primary/10 px-1 rounded">"corrupt"</code> to simulate integrity verification failure (FR-014).</li>
+            <li>Upload a PDF that was signed and locked through this portal. The server computes a real SHA-256 hash and compares it against the stored cryptographic baseline.</li>
+            <li>If the file is unmodified, hashes will match and the result will show <strong>AUTHENTIC</strong>. Any modification — even a single byte — will produce a <strong>MISMATCH</strong>.</li>
+            <li>Hover over the displayed hash values to see the full 64-character SHA-256 hex string.</li>
           </ul>
         </div>
       </div>

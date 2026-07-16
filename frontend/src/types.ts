@@ -66,6 +66,7 @@ export interface Document {
   auditLog: AuditLogEntry[]
   downloadUrl?: string
   pageCount?: number
+  rejectionComment?: string | null
 }
 
 export type UserRole = 'user' | 'supervisor' | 'manager'
@@ -97,3 +98,15 @@ export interface VerificationResult {
   }>
   tamperedAt?: string
 }
+
+export interface Notification {
+  id: string
+  userId: string
+  documentId: string
+  type: 'invited_to_sign' | 'co_signatory_completed' | 'document_locked'
+  message: string
+  read: boolean
+  createdAt: string
+  document?: Document
+}
+

@@ -1,13 +1,22 @@
 import { Client } from 'minio';
 import dotenv from 'dotenv';
+import { encryptBuffer, decryptBuffer } from './lib/fileEncryption';
 
 dotenv.config();
 
 const endpoint = process.env.MINIO_ENDPOINT || 'localhost';
 const port = parseInt(process.env.MINIO_PORT || '9000', 10);
 const useSSL = process.env.MINIO_USE_SSL === 'true';
-const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
-const secretKey = process.env.MINIO_SECRET_KEY || 'minioadmin';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not defined in the environment variables. Refusing to start with an insecure default.`);
+  }
+  return value;
+}
+
+const accessKey = requireEnv('MINIO_ACCESS_KEY');
+const secretKey = requireEnv('MINIO_SECRET_KEY');
 export const BUCKET_NAME = process.env.MINIO_BUCKET || 'documents';
 
 export const minioClient = new Client({
@@ -42,12 +51,13 @@ export async function uploadDocumentToMinio(
   fileBuffer: Buffer,
   metaData: Record<string, string>
 ): Promise<string> {
+  const encrypted = encryptBuffer(fileBuffer);
   return new Promise((resolve, reject) => {
     minioClient.putObject(
       BUCKET_NAME,
       fileKey,
-      fileBuffer,
-      fileBuffer.length,
+      encrypted,
+      encrypted.length,
       metaData,
       (err, objInfo) => {
         if (err) {
@@ -81,4 +91,24 @@ export async function getDocumentDownloadUrl(fileKey: string): Promise<string> {
   });
 }
 
-
+// Get document as a Buffer helper
+export async function getDocumentBufferFromMinio(fileKey: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    minioClient.getObject(BUCKET_NAME, fileKey, (err, stream) => {
+      if (err) {
+        return reject(err);
+      }
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      stream.on('error', (streamErr) => reject(streamErr));
+      stream.on('end', () => {
+        try {
+          const decrypted = decryptBuffer(Buffer.concat(chunks));
+          resolve(decrypted);
+        } catch (decryptErr) {
+          reject(decryptErr);
+        }
+      });
+    });
+  });
+}

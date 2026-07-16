@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Clock, CheckCircle, Lock, AlertCircle, Plus,
-  Search, ArrowRight, Sparkles, UserPlus
+  Search, ArrowRight
 } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import UploadModal from '../components/UploadModal'
@@ -13,17 +13,48 @@ import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
 function StatusBadge({ status }: { status: Document['status'] }) {
   const map: Record<Document['status'], React.ReactNode> = {
     draft:             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>,
-    pending_supervisor:<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending</span>,
-    pending_manager:   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending</span>,
+    pending_supervisor:<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending Supervisor</span>,
+    pending_manager:   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Pending Manager</span>,
     signed:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Signed</span>,
-    locked:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Completed</span>,
+    locked:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">Completed</span>,
     rejected:          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-800 border border-red-200">Rejected</span>,
   }
   return <>{map[status]}</>
 }
 
+function getSigningProgress(doc: Document) {
+  const signatureMarkers = doc.markers ? doc.markers.filter(m => m.type === 'signature') : []
+  
+  if (signatureMarkers.length > 0) {
+    const totalUsers = Array.from(new Set(signatureMarkers.map(m => m.assignedTo.id)))
+    const signedUsers = totalUsers.filter(userId => {
+      const userMarkers = signatureMarkers.filter(m => m.assignedTo.id === userId)
+      return userMarkers.every(m => m.signed)
+    })
+    return {
+      signed: signedUsers.length,
+      total: totalUsers.length
+    }
+  }
+
+  // Fallback to recipients (e.g. for mock data without markers)
+  const totalRecipients = doc.recipients ? doc.recipients.length : 0
+  if (totalRecipients > 0) {
+    let signed = 0
+    if (doc.status === 'locked' || doc.status === 'signed') {
+      signed = totalRecipients
+    } else if (doc.status === 'pending_manager') {
+      // Supervisor has signed, Manager has not.
+      signed = 1
+    }
+    return { signed, total: totalRecipients }
+  }
+
+  return { signed: 0, total: 0 }
+}
+
 export default function Dashboard() {
-  const { documents, currentUser, addDocument, refreshDocuments } = useApp()
+  const { documents, currentUser, addDocument, refreshDocuments, token } = useApp()
   const [showUpload, setShowUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'signed' | 'pending'>('all')
   const navigate = useNavigate()
@@ -37,11 +68,46 @@ export default function Dashboard() {
     return true
   })
 
+  // Compute real stats from actual documents
+  const totalDocs = myDocs.length
+
+  const pendingCount = myDocs.filter(
+    d => d.status === 'pending_supervisor' || d.status === 'pending_manager'
+  ).length
+
+  const now = new Date()
+  const currentMonth = now.getMonth()
+  const currentYear = now.getFullYear()
+  const completedThisMonth = myDocs.filter(d => {
+    if (d.status !== 'locked') return false
+    const updated = new Date(d.updatedAt)
+    return updated.getMonth() === currentMonth && updated.getFullYear() === currentYear
+  }).length
+
+  const lockedDocs = myDocs.filter(d => d.status === 'locked')
+  let avgCompletionLabel = '—'
+  if (lockedDocs.length > 0) {
+    const totalMs = lockedDocs.reduce((sum, d) => {
+      const start = new Date(d.uploadedAt).getTime()
+      const end = new Date(d.updatedAt).getTime()
+      return sum + Math.max(0, end - start)
+    }, 0)
+    const avgMs = totalMs / lockedDocs.length
+    const avgHours = avgMs / (1000 * 60 * 60)
+    if (avgHours < 1) {
+      avgCompletionLabel = `${Math.round(avgHours * 60)}m`
+    } else if (avgHours < 24) {
+      avgCompletionLabel = `${avgHours.toFixed(1)}h`
+    } else {
+      avgCompletionLabel = `${(avgHours / 24).toFixed(1)}d`
+    }
+  }
+
   const stats = [
-    { label: 'Total Documents', value: '1,284', icon: <FileText size={18} className="text-primary" />, trend: '+12%', sub: 'documents' },
-    { label: 'Pending Signature', value: '42', icon: <Clock size={18} className="text-amber-600" />, sub: 'awaiting sign' },
-    { label: 'Completed This Month', value: '156', icon: <CheckCircle size={18} className="text-emerald-600" />, sub: 'locked docs' },
-    { label: 'Avg. Completion Time', value: '4.2h', icon: <Clock size={18} className="text-primary" />, sub: 'turnaround' },
+    { label: 'Total Documents', value: String(totalDocs), icon: <FileText size={18} className="text-primary" />, sub: 'documents' },
+    { label: 'Pending Signature', value: String(pendingCount), icon: <Clock size={18} className="text-amber-600" />, sub: 'awaiting sign' },
+    { label: 'Completed This Month', value: String(completedThisMonth), icon: <CheckCircle size={18} className="text-emerald-600" />, sub: 'locked docs' },
+    { label: 'Avg. Completion Time', value: avgCompletionLabel, icon: <Clock size={18} className="text-primary" />, sub: 'turnaround' },
   ]
 
   const handleUpload = async (file: File) => {
@@ -54,6 +120,9 @@ export default function Dashboard() {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
       const res = await fetch(`${apiBase}/documents/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData
       })
 
@@ -101,11 +170,6 @@ export default function Dashboard() {
                 <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center">
                   {s.icon}
                 </div>
-                {s.trend && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary-container text-on-primary-container">
-                    {s.trend}
-                  </span>
-                )}
               </div>
               <p className="text-2xl font-bold text-on-surface mt-2">{s.value}</p>
               <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">{s.label}</p>
@@ -180,7 +244,20 @@ export default function Dashboard() {
                       </div>
                     </td>
                     <td className="table-cell px-4">
-                      <StatusBadge status={doc.status} />
+                      <div className="flex flex-col items-start gap-1">
+                        <StatusBadge status={doc.status} />
+                        {(() => {
+                          const { signed, total } = getSigningProgress(doc)
+                          if (total > 0) {
+                            return (
+                              <span className="text-[10px] text-on-surface-variant/60 font-medium">
+                                {signed} of {total} signed
+                              </span>
+                            )
+                          }
+                          return null
+                        })()}
+                      </div>
                     </td>
                     <td className="table-cell px-4">
                       <div className="flex items-center gap-2">
@@ -214,39 +291,6 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        {/* Lower Banner Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="glass-card p-6 flex items-start gap-4 hover:border-primary/40 transition-colors cursor-pointer">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
-              <Sparkles size={20} />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-on-surface">Automate with Templates</h3>
-              <p className="text-xs text-on-surface-variant mt-1 mb-3">
-                Save time on repetitive contracts by creating reusable templates for your entire team.
-              </p>
-              <button className="text-xs font-bold text-primary flex items-center gap-1 group">
-                Create your first template <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
-              </button>
-            </div>
-          </div>
-
-          <div className="glass-card p-6 flex items-start gap-4 hover:border-primary/40 transition-colors cursor-pointer">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
-              <UserPlus size={20} />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-on-surface">Invite your Team</h3>
-              <p className="text-xs text-on-surface-variant mt-1 mb-3">
-                Collaborate securely with shared folders, role-based access, and detailed audit trails.
-              </p>
-              <button className="text-xs font-bold text-primary flex items-center gap-1 group">
-                Manage members <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
-              </button>
-            </div>
           </div>
         </div>
       </div>

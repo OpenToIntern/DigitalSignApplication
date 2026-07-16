@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, HelpCircle, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History } from 'lucide-react'
+import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { MOCK_USERS } from '../constants/mockData'
 import MfaModal from '../components/MfaModal'
@@ -23,12 +23,13 @@ export default function Landing() {
   const { setCurrentUser, setIsAuthenticated, setMfaVerified, setDukcapilVerified } = useApp()
   const navigate = useNavigate()
 
-  const handleOAuthLogin = (user: User) => {
-    setPendingEmail(user.email)
-    setPendingName(user.name)
-    setStep('mfa')
-    setShowAuthDialog(false)
-  }
+  const handleGoogleLogin = () => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const redirectUri = `${window.location.origin}/auth/callback`;
+    const scope = 'openid email profile';
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
+    window.location.href = authUrl;
+  };
 
   const handleCustomSignUp = (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,12 +78,6 @@ export default function Landing() {
             <button className="text-primary font-bold border-b-2 border-primary pb-1 font-label-md text-label-md">
               Documents
             </button>
-            <button className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md">
-              Vault
-            </button>
-            <button className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md">
-              Analytics
-            </button>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -94,9 +89,6 @@ export default function Landing() {
           <div className="h-8 w-[1px] bg-outline-variant mx-1 hidden md:block"></div>
           <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant transition-colors" title="Notifications">
             <Bell size={18} />
-          </button>
-          <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant transition-colors" title="Help">
-            <HelpCircle size={18} />
           </button>
           <button 
             onClick={() => setShowAuthDialog(true)}
@@ -130,28 +122,9 @@ export default function Landing() {
                   onClick={() => setShowAuthDialog(true)}
                   className="px-8 py-4 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
                 >
-                  Start Free Trial
+                  Log In to Get Started
                   <ArrowRight size={16} />
                 </button>
-                <button
-                  onClick={() => alert('Launching interactive SignHere dashboard demo...')}
-                  className="px-8 py-4 border border-outline text-on-surface font-label-md text-label-md rounded-xl hover:bg-surface-container transition-all flex items-center justify-center gap-2"
-                >
-                  Watch Demo
-                  <svg className="w-4 h-4 text-on-surface" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
-              </div>
-
-              <div className="mt-12 flex items-center gap-4 text-on-surface-variant">
-                <div className="flex -space-x-2">
-                  <div className="w-8 h-8 rounded-full border-2 border-background bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary">IK</div>
-                  <div className="w-8 h-8 rounded-full border-2 border-background bg-indigo-500/10 flex items-center justify-center text-[10px] font-bold text-indigo-700">JH</div>
-                  <div className="w-8 h-8 rounded-full border-2 border-background bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-700">RT</div>
-                </div>
-                <span className="text-label-md font-label-md font-semibold">Trusted by 5,000+ Legal Firms</span>
               </div>
             </div>
 
@@ -417,32 +390,20 @@ export default function Landing() {
             </div>
 
             {/* OAuth */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="mb-6">
               <button
-                onClick={() => handleOAuthLogin(MOCK_USERS[0])}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-xs font-bold text-on-surface"
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-sm font-bold text-on-surface"
               >
                 {/* Google Icon */}
-                <svg width="14" height="14" viewBox="0 0 18 18">
+                <svg width="16" height="16" viewBox="0 0 18 18">
                   <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
                   <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
                   <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
                   <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
                 </svg>
-                Google
-              </button>
-              <button
-                onClick={() => handleOAuthLogin(MOCK_USERS[1])}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-xs font-bold text-on-surface"
-              >
-                {/* Microsoft Icon */}
-                <svg width="14" height="14" viewBox="0 0 21 21">
-                  <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                  <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-                  <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-                  <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-                </svg>
-                Microsoft
+                Sign in with Google
               </button>
             </div>
 
