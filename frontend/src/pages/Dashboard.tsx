@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Clock, CheckCircle, Lock, AlertCircle, Plus,
-  Search, ArrowRight, Sparkles, UserPlus
+  Search, ArrowRight
 } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import UploadModal from '../components/UploadModal'
@@ -291,39 +291,6 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        {/* Lower Banner Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="glass-card p-6 flex items-start gap-4 hover:border-primary/40 transition-colors cursor-pointer">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
-              <Sparkles size={20} />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-on-surface">Automate with Templates</h3>
-              <p className="text-xs text-on-surface-variant mt-1 mb-3">
-                Save time on repetitive contracts by creating reusable templates for your entire team.
-              </p>
-              <button className="text-xs font-bold text-primary flex items-center gap-1 group">
-                Create your first template <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
-              </button>
-            </div>
-          </div>
-
-          <div className="glass-card p-6 flex items-start gap-4 hover:border-primary/40 transition-colors cursor-pointer">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
-              <UserPlus size={20} />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-on-surface">Invite your Team</h3>
-              <p className="text-xs text-on-surface-variant mt-1 mb-3">
-                Collaborate securely with shared folders, role-based access, and detailed audit trails.
-              </p>
-              <button className="text-xs font-bold text-primary flex items-center gap-1 group">
-                Manage members <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
-              </button>
-            </div>
           </div>
         </div>
       </div>
