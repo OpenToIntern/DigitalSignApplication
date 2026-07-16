@@ -7,8 +7,16 @@ dotenv.config();
 const endpoint = process.env.MINIO_ENDPOINT || 'localhost';
 const port = parseInt(process.env.MINIO_PORT || '9000', 10);
 const useSSL = process.env.MINIO_USE_SSL === 'true';
-const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
-const secretKey = process.env.MINIO_SECRET_KEY || 'minioadmin';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not defined in the environment variables. Refusing to start with an insecure default.`);
+  }
+  return value;
+}
+
+const accessKey = requireEnv('MINIO_ACCESS_KEY');
+const secretKey = requireEnv('MINIO_SECRET_KEY');
 export const BUCKET_NAME = process.env.MINIO_BUCKET || 'documents';
 
 export const minioClient = new Client({

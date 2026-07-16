@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, FileText, ShieldCheck, ClipboardList,
   Settings, LogOut, Menu, X, Bell, ChevronDown,
-  PenSquare, Users, Lock, Search, HelpCircle, FileCheck
+  PenSquare, Users, Lock, Search, FileCheck
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Notification } from '../types'
@@ -207,13 +207,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {/* Bottom links */}
           <div className="px-4 pb-6 space-y-1">
             <button
-              onClick={() => navigate('/settings')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-low text-sm font-medium transition-all"
-            >
-              <HelpCircle size={18} />
-              Help Center
-            </button>
-            <button
               onClick={handleLogout}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-error hover:bg-error/5 text-sm font-medium transition-all"
             >
@@ -359,10 +352,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </div>
               )}
             </div>
-
-            <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant hover:text-on-surface transition-colors">
-              <HelpCircle size={18} />
-            </button>
 
             {/* Profile Avatar Trigger dropdown */}
             <div className="relative ml-2">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, HelpCircle, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History } from 'lucide-react'
+import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { MOCK_USERS } from '../constants/mockData'
 import MfaModal from '../components/MfaModal'
@@ -89,9 +89,6 @@ export default function Landing() {
           <div className="h-8 w-[1px] bg-outline-variant mx-1 hidden md:block"></div>
           <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant transition-colors" title="Notifications">
             <Bell size={18} />
-          </button>
-          <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant transition-colors" title="Help">
-            <HelpCircle size={18} />
           </button>
           <button 
             onClick={() => setShowAuthDialog(true)}

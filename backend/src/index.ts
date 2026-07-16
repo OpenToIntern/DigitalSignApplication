@@ -15,7 +15,15 @@ import { generateUserKeysAndCert, decryptUserPrivateKey } from './lib/certManage
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not defined in the environment variables. Refusing to start with an insecure default.`);
+  }
+  return value;
+}
+
+const JWT_SECRET = requireEnv('JWT_SECRET');
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -308,7 +316,10 @@ app.post('/api/auth/verify-nik', async (req: Request, res: Response): Promise<an
     // Success - update User status in DB
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
-      data: { nikVerified: true }
+      data: {
+        nikVerified: true,
+        nik: String(nik).trim()
+      }
     });
 
     // Move straight to sending OTP
@@ -389,7 +400,8 @@ app.post('/api/auth/verify-otp', async (req: Request, res: Response): Promise<an
         id: user.id,
         name: user.name,
         email: user.email,
-        accessRole: user.accessRole
+        accessRole: user.accessRole,
+        nik: user.nik
       }
     });
   } catch (error: any) {
@@ -462,6 +474,105 @@ app.get('/api/users', async (req: Request, res: Response) => {
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/users/profile - fetch real profile details including parsed X.509 certificate metadata
+app.get('/api/users/profile', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const userId = req.user!.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    let certificateDetails = null;
+    if (user.publicCertificate) {
+      try {
+        const cert = new crypto.X509Certificate(user.publicCertificate);
+        const keyType = cert.publicKey.asymmetricKeyType?.toUpperCase() || 'RSA';
+        const modulusLength = cert.publicKey.asymmetricKeyDetails?.modulusLength || 2048;
+        certificateDetails = {
+          issuer: cert.issuer.replace(/\n/g, ', '),
+          subject: cert.subject.replace(/\n/g, ', '),
+          validFrom: cert.validFrom,
+          validTo: cert.validTo,
+          encryptionMethod: `${keyType} ${modulusLength}-bit / SHA-256`,
+          pem: user.publicCertificate
+        };
+      } catch (certError) {
+        console.error('Error parsing user certificate:', certError);
+      }
+    }
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      accessRole: user.accessRole,
+      nik: user.nik,
+      nikVerified: user.nikVerified,
+      hasPrivateKey: !!user.encryptedPrivateKey,
+      certificate: certificateDetails
+    });
+  } catch (error: any) {
+    console.error('Get Profile Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/users/regenerate-cert - regenerate X.509 certificate and key pair
+app.post('/api/users/regenerate-cert', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const userId = req.user!.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Generate new key pair and cert
+    const keypair = await generateUserKeysAndCert(user.name, user.googleEmail || user.email);
+
+    // Update in database
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        publicCertificate: keypair.cert,
+        encryptedPrivateKey: keypair.encryptedPrivateKey
+      }
+    });
+
+    let certificateDetails = null;
+    try {
+      const cert = new crypto.X509Certificate(updatedUser.publicCertificate!);
+      const keyType = cert.publicKey.asymmetricKeyType?.toUpperCase() || 'RSA';
+      const modulusLength = cert.publicKey.asymmetricKeyDetails?.modulusLength || 2048;
+      certificateDetails = {
+        issuer: cert.issuer.replace(/\n/g, ', '),
+        subject: cert.subject.replace(/\n/g, ', '),
+        validFrom: cert.validFrom,
+        validTo: cert.validTo,
+        encryptionMethod: `${keyType} ${modulusLength}-bit / SHA-256`,
+        pem: updatedUser.publicCertificate
+      };
+    } catch (certError) {
+      console.error('Error parsing regenerated certificate:', certError);
+    }
+
+    res.json({
+      success: true,
+      hasPrivateKey: !!updatedUser.encryptedPrivateKey,
+      certificate: certificateDetails
+    });
+  } catch (error: any) {
+    console.error('Regenerate Certificate Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to regenerate certificate.' });
   }
 });
 
@@ -700,10 +811,31 @@ app.post('/api/documents/verify', authenticateJWT, upload.single('file'), async 
   }
 });
 
-// GET /api/documents - get all documents
+// GET /api/documents - get documents scoped to the authenticated user's role
 app.get('/api/documents', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const userId = req.user!.id;
+    const userRole = req.user!.role; // 'user', 'supervisor', 'manager'
+
+    let whereClause: any;
+
+    if (userRole === 'supervisor' || userRole === 'manager') {
+      // Supervisors/Managers only see documents where they are an assigned
+      // signatory OR have a marker assigned to them — never drafts or other
+      // documents they have no relationship to.
+      whereClause = {
+        OR: [
+          { signatories: { some: { userId } } },
+          { markers: { some: { assignedToId: userId } } },
+        ],
+      };
+    } else {
+      // Staff ('user') sees only documents they created
+      whereClause = { senderId: userId };
+    }
+
     const docs = await prisma.document.findMany({
+      where: whereClause,
       include: {
         sender: true,
         markers: {
@@ -740,6 +872,53 @@ app.get('/api/documents', authenticateJWT, async (req: AuthenticatedRequest, res
     });
 
     res.json(docsWithUrls);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/audit-logs - get real audit log records scoped to the user's documents
+app.get('/api/audit-logs', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const userRole = req.user!.role;
+
+    // Build a document-scoping filter identical to GET /api/documents
+    let docWhereClause: any;
+    if (userRole === 'supervisor' || userRole === 'manager') {
+      docWhereClause = {
+        OR: [
+          { signatories: { some: { userId } } },
+          { markers: { some: { assignedToId: userId } } },
+        ],
+      };
+    } else {
+      docWhereClause = { senderId: userId };
+    }
+
+    const logs = await prisma.auditLog.findMany({
+      where: {
+        document: docWhereClause,
+      },
+      include: {
+        user: true,
+        document: {
+          select: { name: true },
+        },
+      },
+      orderBy: {
+        timestamp: 'desc',
+      },
+      take: 200,
+    });
+
+    // Map to include documentName at the top level for the frontend
+    const mapped = logs.map(log => ({
+      ...log,
+      documentName: log.document?.name || null,
+    }));
+
+    res.json(mapped);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1183,12 +1362,20 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
 
       // Append audit logs if provided
       if (auditLog !== undefined && Array.isArray(auditLog)) {
+        // Resolve the actual client IP on the server
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+
         // Get already stored logs to avoid duplicates
         const existingLogs = await tx.auditLog.findMany({ where: { documentId: id } });
         const existingIds = new Set(existingLogs.map(l => l.id));
 
         for (const log of auditLog) {
           if (!existingIds.has(log.id)) {
+            let finalIp = log.ip || 'unknown';
+            if (finalIp === 'server-injected' || finalIp === '192.168.1.108') {
+              finalIp = clientIp;
+            }
+
             await tx.auditLog.create({
               data: {
                 id: log.id,
@@ -1196,7 +1383,7 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
                 event: log.event,
                 userId: log.user ? log.user.id : null,
                 timestamp: log.timestamp ? new Date(log.timestamp) : new Date(),
-                ip: log.ip || 'unknown',
+                ip: finalIp,
                 metadata: log.metadata || undefined
               }
             });

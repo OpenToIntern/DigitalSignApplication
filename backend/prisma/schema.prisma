@@ -12,6 +12,7 @@ model User {
   email       String     @unique
   googleEmail String?    @unique
   name        String
+  nik         String?
   accessRole  String     // 'user', 'supervisor', 'manager'
   nikVerified Boolean    @default(false)
   documents   Document[] @relation("SenderRelation")

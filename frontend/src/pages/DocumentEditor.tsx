@@ -468,7 +468,7 @@ export default function DocumentEditor() {
           event: 'SIGNATURE_MARKERS_PLACED',
           user: currentUser!,
           timestamp: now,
-          ip: '192.168.1.108',
+          ip: 'server-injected',
           documentId: doc.id,
           documentName: doc.name,
           metadata: { action: 'Resubmitted document after rejection' }
@@ -501,7 +501,7 @@ export default function DocumentEditor() {
           event: 'SIGNATURE_MARKERS_PLACED',
           user: currentUser!,
           timestamp: now,
-          ip: '192.168.1.108',
+          ip: 'server-injected',
           documentId: doc.id,
           documentName: doc.name,
           metadata: { action: `Assigned ${selectedSignatories.length} signatories` },
@@ -511,7 +511,7 @@ export default function DocumentEditor() {
           event: 'SIGNING_INVITATION_SENT',
           user: currentUser!,
           timestamp: now,
-          ip: '192.168.1.108',
+          ip: 'server-injected',
           documentId: doc.id,
           documentName: doc.name,
           metadata: { action: `Invited ${selectedSignatories.map(user => user.email).join(', ')}` }
@@ -825,7 +825,7 @@ export default function DocumentEditor() {
           </div>
 
           {/* Bottom Zoom/Undo Page Controls Bar */}
-          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant z-10 flex-shrink-0">
+          <div className="mt-4 px-6 py-2 bg-white rounded-full border border-outline-variant shadow-sm flex items-center gap-6 text-xs text-on-surface-variant z-10 flex-shrink-0 self-center">
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setZoomScale(z => Math.max(0.6, z - 0.15))}

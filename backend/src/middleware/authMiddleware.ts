@@ -1,7 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not defined in the environment variables. Refusing to start with an insecure default.`);
+  }
+  return value;
+}
+
+const JWT_SECRET = requireEnv('JWT_SECRET');
 
 export interface AuthenticatedRequest extends Request {
   user?: {

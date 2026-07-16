@@ -7,7 +7,7 @@ export default function OtpVerification() {
   const navigate = useNavigate();
   const location = useLocation();
   const { setToken, setCurrentUser, setIsAuthenticated, setMfaVerified, setDukcapilVerified } = useApp();
-  
+
   const state = location.state as { tempToken?: string } | null;
   const tempToken = state?.tempToken;
 
@@ -131,7 +131,7 @@ export default function OtpVerification() {
       setTimeLeft(300);
       setOtp('');
       setSuccessMessage('A fresh OTP code has been sent to your Gmail inbox.');
-      
+
       // Restart timer
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
@@ -158,7 +158,7 @@ export default function OtpVerification() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background text-on-surface px-6 animate-fade-in">
       <div className="max-w-md w-full glass-card rounded-xl p-8 border border-outline-variant/60 shadow-2xl text-center bg-white/70">
-        
+
         {/* Header Icon */}
         <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto mb-6 border border-primary/20">
           <ShieldCheck size={32} />

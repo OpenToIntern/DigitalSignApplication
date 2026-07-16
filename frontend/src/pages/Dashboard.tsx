@@ -68,11 +68,46 @@ export default function Dashboard() {
     return true
   })
 
+  // Compute real stats from actual documents
+  const totalDocs = myDocs.length
+
+  const pendingCount = myDocs.filter(
+    d => d.status === 'pending_supervisor' || d.status === 'pending_manager'
+  ).length
+
+  const now = new Date()
+  const currentMonth = now.getMonth()
+  const currentYear = now.getFullYear()
+  const completedThisMonth = myDocs.filter(d => {
+    if (d.status !== 'locked') return false
+    const updated = new Date(d.updatedAt)
+    return updated.getMonth() === currentMonth && updated.getFullYear() === currentYear
+  }).length
+
+  const lockedDocs = myDocs.filter(d => d.status === 'locked')
+  let avgCompletionLabel = '—'
+  if (lockedDocs.length > 0) {
+    const totalMs = lockedDocs.reduce((sum, d) => {
+      const start = new Date(d.uploadedAt).getTime()
+      const end = new Date(d.updatedAt).getTime()
+      return sum + Math.max(0, end - start)
+    }, 0)
+    const avgMs = totalMs / lockedDocs.length
+    const avgHours = avgMs / (1000 * 60 * 60)
+    if (avgHours < 1) {
+      avgCompletionLabel = `${Math.round(avgHours * 60)}m`
+    } else if (avgHours < 24) {
+      avgCompletionLabel = `${avgHours.toFixed(1)}h`
+    } else {
+      avgCompletionLabel = `${(avgHours / 24).toFixed(1)}d`
+    }
+  }
+
   const stats = [
-    { label: 'Total Documents', value: '1,284', icon: <FileText size={18} className="text-primary" />, trend: '+12%', sub: 'documents' },
-    { label: 'Pending Signature', value: '42', icon: <Clock size={18} className="text-amber-600" />, sub: 'awaiting sign' },
-    { label: 'Completed This Month', value: '156', icon: <CheckCircle size={18} className="text-emerald-600" />, sub: 'locked docs' },
-    { label: 'Avg. Completion Time', value: '4.2h', icon: <Clock size={18} className="text-primary" />, sub: 'turnaround' },
+    { label: 'Total Documents', value: String(totalDocs), icon: <FileText size={18} className="text-primary" />, sub: 'documents' },
+    { label: 'Pending Signature', value: String(pendingCount), icon: <Clock size={18} className="text-amber-600" />, sub: 'awaiting sign' },
+    { label: 'Completed This Month', value: String(completedThisMonth), icon: <CheckCircle size={18} className="text-emerald-600" />, sub: 'locked docs' },
+    { label: 'Avg. Completion Time', value: avgCompletionLabel, icon: <Clock size={18} className="text-primary" />, sub: 'turnaround' },
   ]
 
   const handleUpload = async (file: File) => {
@@ -135,11 +170,6 @@ export default function Dashboard() {
                 <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center">
                   {s.icon}
                 </div>
-                {s.trend && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary-container text-on-primary-container">
-                    {s.trend}
-                  </span>
-                )}
               </div>
               <p className="text-2xl font-bold text-on-surface mt-2">{s.value}</p>
               <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">{s.label}</p>
