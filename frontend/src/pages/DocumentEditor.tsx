@@ -298,20 +298,12 @@ export default function DocumentEditor() {
   const canPlaceMarkers = isStaff && (doc.status === 'draft' || doc.status === 'rejected')
   const canSupervisorSign = isSupervisor && doc.status === 'pending_supervisor'
   const canManagerSign = isManager && doc.status === 'pending_manager'
-  const canCurrentSignerEditMarker = (marker: Marker) => {
-    const isSigningWorkflow = doc.status === 'pending_supervisor' || doc.status === 'pending_manager'
-    return isSigningWorkflow &&
-      !marker.signed &&
-      marker.assignedTo.accessRole === currentUser?.accessRole &&
-      (isSupervisor || isManager)
-  }
-
   const canMoveMarker = (marker: Marker) => {
-    return canPlaceMarkers || canCurrentSignerEditMarker(marker)
+    return canPlaceMarkers
   }
 
   const canResizeMarker = (marker: Marker) => {
-    return canPlaceMarkers || canCurrentSignerEditMarker(marker)
+    return canPlaceMarkers
   }
 
   const handlePlaceMarker = (type: Marker['type']) => {
