@@ -20,6 +20,7 @@ model User {
   signatories DocumentSignatory[]
   auditLogs   AuditLog[]
   notifications Notification[]
+  passwordHash         String?
   publicCertificate    String?
   encryptedPrivateKey  String?
 }

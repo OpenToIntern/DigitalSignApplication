@@ -1,27 +1,27 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History } from 'lucide-react'
-import { useApp } from '../context/AppContext'
-import { MOCK_USERS } from '../constants/mockData'
-import MfaModal from '../components/MfaModal'
-import RoleSelectModal from '../components/RoleSelectModal'
-import type { User } from '../types'
+import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History, AlertTriangle, Loader2, Eye, EyeOff } from 'lucide-react'
 
-type AuthStep = 'idle' | 'mfa' | 'role' | 'done'
+
 
 export default function Landing() {
-  const [step, setStep] = useState<AuthStep>('idle')
   const [showAuthDialog, setShowAuthDialog] = useState(false)
-  const [pendingEmail, setPendingEmail] = useState('')
-  const [pendingName, setPendingName] = useState('')
-  
-  // Signup forms state
+
+  // Toggle between signup and login modes in the modal
+  const [authMode, setAuthMode] = useState<'signup' | 'login'>('login')
+
+  // Signup form state
   const [fullName, setFullName] = useState('')
   const [emailAddress, setEmailAddress] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
-  const { setCurrentUser, setIsAuthenticated, setMfaVerified, setDukcapilVerified } = useApp()
+  // Form feedback state
+  const [formError, setFormError] = useState<string | null>(null)
+  const [formLoading, setFormLoading] = useState(false)
+
   const navigate = useNavigate()
+
 
   const handleGoogleLogin = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -31,36 +31,105 @@ export default function Landing() {
     window.location.href = authUrl;
   };
 
-  const handleCustomSignUp = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!fullName || !emailAddress || !password) {
-      alert('Please fill out all fields')
-      return
+  // Reusable post-auth routing: handles nikPending and mfaPending responses
+  const handleAuthResponse = (data: any) => {
+    if (data.nikPending) {
+      navigate('/verify-nik', { replace: true, state: { tempToken: data.tempToken } });
+      return;
     }
-    setPendingEmail(emailAddress)
-    setPendingName(fullName)
-    setStep('mfa')
-    setShowAuthDialog(false)
-  }
-
-  const handleMfaSuccess = () => {
-    setMfaVerified(true)
-    setStep('role')
-  }
-
-  const handleRoleSuccess = (user: User) => {
-    setCurrentUser(user)
-    setIsAuthenticated(true)
-    setDukcapilVerified(true)
-    setStep('done')
-
-    const routes: Record<string, string> = {
-      user: '/dashboard',
-      supervisor: '/supervisor',
-      manager: '/manager',
+    if (data.mfaPending) {
+      navigate('/verify-otp', { replace: true, state: { tempToken: data.tempToken } });
+      return;
     }
-    navigate(routes[user.accessRole] || '/dashboard')
-  }
+    // Unexpected: no pending step — shouldn't happen in normal flow
+    setFormError('Unexpected server response. Please try again.');
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!fullName.trim() || !emailAddress.trim() || !password) {
+      setFormError('Please fill out all fields.');
+      return;
+    }
+
+    setFormLoading(true);
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+      const res = await fetch(`${apiBase}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName: fullName.trim(), email: emailAddress.trim(), password }),
+      });
+
+      const data = await res.json();
+
+      if (res.status === 409) {
+        setFormError(data.error || 'This email is already registered. Please log in instead.');
+        return;
+      }
+      if (!res.ok) {
+        setFormError(data.error || 'Registration failed. Please try again.');
+        return;
+      }
+
+      setShowAuthDialog(false);
+      handleAuthResponse(data);
+    } catch (err: any) {
+      setFormError('Network error. Please check your connection and try again.');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!emailAddress.trim() || !password) {
+      setFormError('Please enter your email and password.');
+      return;
+    }
+
+    setFormLoading(true);
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+      const res = await fetch(`${apiBase}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailAddress.trim(), password }),
+      });
+
+      const data = await res.json();
+
+      if (res.status === 401) {
+        setFormError(data.error || 'Invalid email or password.');
+        return;
+      }
+      if (!res.ok) {
+        setFormError(data.error || 'Login failed. Please try again.');
+        return;
+      }
+
+      setShowAuthDialog(false);
+      handleAuthResponse(data);
+    } catch (err: any) {
+      setFormError('Network error. Please check your connection and try again.');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const openDialog = (mode: 'signup' | 'login' = 'signup') => {
+    setAuthMode(mode);
+    setFormError(null);
+    setFullName('');
+    setEmailAddress('');
+    setPassword('');
+    setShowPassword(false);
+    setShowAuthDialog(true);
+  };
 
   return (
     <div className="bg-background text-on-surface font-body-md selection:bg-primary/20 selection:text-primary min-h-screen flex flex-col justify-between">
@@ -91,11 +160,12 @@ export default function Landing() {
             <Bell size={18} />
           </button>
           <button 
-            onClick={() => setShowAuthDialog(true)}
+            onClick={() => openDialog('login')}
             className="btn-primary text-xs py-1.5 px-3 rounded-lg"
           >
             Log In
           </button>
+
         </div>
       </nav>
 
@@ -119,9 +189,10 @@ export default function Landing() {
               
               <div className="flex flex-col sm:flex-row gap-4">
                 <button
-                  onClick={() => setShowAuthDialog(true)}
+                  onClick={() => openDialog('signup')}
                   className="px-8 py-4 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
                 >
+
                   Log In to Get Started
                   <ArrowRight size={16} />
                 </button>
@@ -300,11 +371,12 @@ export default function Landing() {
             </p>
             <div className="flex flex-col sm:flex-row justify-center gap-6">
               <button 
-                onClick={() => setShowAuthDialog(true)}
+                onClick={() => openDialog('signup')}
                 className="px-10 py-5 bg-background text-primary font-headline-md text-headline-md rounded-xl hover:bg-white transition-all shadow-xl font-bold"
               >
                 Create Free Account
               </button>
+
               <button 
                 onClick={() => alert('Contacting sales department...')}
                 className="px-10 py-5 border border-white/30 text-white font-headline-md text-headline-md rounded-xl hover:bg-white/10 transition-all font-bold"
@@ -374,29 +446,27 @@ export default function Landing() {
             </div>
           </div>
         </div>
-      </footer>
-
-      {/* Login Card Dialog */}
+      </footer>      {/* Auth Dialog — Sign Up / Log In */}
       {showAuthDialog && (
         <div className="modal-overlay">
           <div className="modal-content max-w-md bg-white border border-outline-variant p-6 sm:p-8">
-            <div className="text-center mb-6">
+
+            <div className="text-center mb-5">
               <h2 className="font-display text-xl font-bold text-on-surface mb-1">
-                Create your account
+                {authMode === 'signup' ? 'Create your account' : 'Welcome back'}
               </h2>
               <p className="text-xs text-on-surface-variant">
-                Start your 14-day free trial today.
+                {authMode === 'signup' ? 'Start your 14-day free trial today.' : 'Sign in to access your documents.'}
               </p>
             </div>
 
-            {/* OAuth */}
-            <div className="mb-6">
+            {/* Google OAuth */}
+            <div className="mb-5">
               <button
                 type="button"
                 onClick={handleGoogleLogin}
                 className="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-sm font-bold text-on-surface"
               >
-                {/* Google Icon */}
                 <svg width="16" height="16" viewBox="0 0 18 18">
                   <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
                   <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
@@ -407,84 +477,183 @@ export default function Landing() {
               </button>
             </div>
 
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center gap-3 mb-5">
               <div className="flex-1 h-px bg-outline-variant/60" />
               <span className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider font-semibold">
-                Or signup with email
+                {authMode === 'signup' ? 'Or sign up with email' : 'Or log in with email'}
               </span>
               <div className="flex-1 h-px bg-outline-variant/60" />
             </div>
 
-            {/* Custom fields signup */}
-            <form onSubmit={handleCustomSignUp} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-on-surface mb-1 text-left">Full Name</label>
-                <input
-                  type="text"
-                  placeholder="John Doe"
-                  value={fullName}
-                  onChange={e => setFullName(e.target.value)}
-                  className="input-field"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
-                <input
-                  type="email"
-                  placeholder="name@company.com"
-                  value={emailAddress}
-                  onChange={e => setEmailAddress(e.target.value)}
-                  className="input-field"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  className="input-field"
-                />
-              </div>
+            {/* SIGN UP FORM */}
+            {authMode === 'signup' && (
+              <form onSubmit={handleSignUp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Full Name</label>
+                  <input
+                    id="signup-fullname"
+                    type="text"
+                    placeholder="John Doe"
+                    value={fullName}
+                    onChange={e => { setFullName(e.target.value); setFormError(null); }}
+                    className="input-field"
+                    disabled={formLoading}
+                    autoComplete="name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
+                  <input
+                    id="signup-email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={emailAddress}
+                    onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
+                    className="input-field"
+                    disabled={formLoading}
+                    autoComplete="email"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
+                  <div className="relative">
+                    <input
+                      id="signup-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Min. 8 characters"
+                      value={password}
+                      onChange={e => { setPassword(e.target.value); setFormError(null); }}
+                      className="input-field pr-10"
+                      disabled={formLoading}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(p => !p)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
 
-              <div className="flex gap-2.5 pt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setShowAuthDialog(false)} 
-                  className="btn-secondary py-2.5 flex-1 justify-center"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  className="btn-primary py-2.5 flex-1 justify-center"
-                >
-                  Sign Up
-                </button>
-              </div>
-            </form>
+                {/* Inline error */}
+                {formError && (
+                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                    <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                    <span className="font-medium text-left">{formError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAuthDialog(false)}
+                    className="btn-secondary py-2.5 flex-1 justify-center"
+                    disabled={formLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary py-2.5 flex-1 justify-center"
+                    disabled={formLoading}
+                  >
+                    {formLoading ? (
+                      <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating...</span>
+                    ) : 'Create Account'}
+                  </button>
+                </div>
+
+                <p className="text-center text-xs text-on-surface-variant pt-1">
+                  Already have an account?{' '}
+                  <button type="button" onClick={() => { setAuthMode('login'); setFormError(null); }} className="text-primary font-bold hover:underline">
+                    Log in instead
+                  </button>
+                </p>
+              </form>
+            )}
+
+            {/* LOG IN FORM */}
+            {authMode === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
+                  <input
+                    id="login-email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={emailAddress}
+                    onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
+                    className="input-field"
+                    disabled={formLoading}
+                    autoComplete="email"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
+                  <div className="relative">
+                    <input
+                      id="login-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={e => { setPassword(e.target.value); setFormError(null); }}
+                      className="input-field pr-10"
+                      disabled={formLoading}
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(p => !p)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline error */}
+                {formError && (
+                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                    <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                    <span className="font-medium text-left">{formError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAuthDialog(false)}
+                    className="btn-secondary py-2.5 flex-1 justify-center"
+                    disabled={formLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary py-2.5 flex-1 justify-center"
+                    disabled={formLoading}
+                  >
+                    {formLoading ? (
+                      <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Signing In...</span>
+                    ) : 'Sign In'}
+                  </button>
+                </div>
+
+                <p className="text-center text-xs text-on-surface-variant pt-1">
+                  Don't have an account?{' '}
+                  <button type="button" onClick={() => { setAuthMode('signup'); setFormError(null); }} className="text-primary font-bold hover:underline">
+                    Sign up instead
+                  </button>
+                </p>
+              </form>
+            )}
+
           </div>
         </div>
-      )}
-
-      {/* MFA OTP Modal */}
-      {step === 'mfa' && (
-        <MfaModal
-          email={pendingEmail}
-          onSuccess={handleMfaSuccess}
-          onClose={() => setStep('idle')}
-        />
-      )}
-
-      {/* Role Selection Modal */}
-      {step === 'role' && (
-        <RoleSelectModal
-          googleEmail={pendingEmail}
-          googleName={pendingName}
-          onSuccess={handleRoleSuccess}
-          onClose={() => setStep('idle')}
-        />
       )}
 
     </div>
