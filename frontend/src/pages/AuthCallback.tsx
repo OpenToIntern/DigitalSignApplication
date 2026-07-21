@@ -13,6 +13,15 @@ export default function AuthCallback() {
   const hasExchanged = useRef(false);
 
   useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam === 'access_denied') {
+      navigate('/', { replace: true, state: { error: 'Sign-in was cancelled. Please try again.' } });
+      return;
+    } else if (errorParam) {
+      navigate('/', { replace: true, state: { error: 'An error occurred during Google authentication. Please try again.' } });
+      return;
+    }
+
     const code = searchParams.get('code');
     if (!code) {
       if (hasExchanged.current) return;

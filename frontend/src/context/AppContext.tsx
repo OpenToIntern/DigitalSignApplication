@@ -91,10 +91,12 @@ function mapApiDocToFrontendDoc(doc: any): Document {
       id: l.id,
       event: l.event,
       user: l.user ? normalizeUser(l.user) : null,
+      userId: l.userId || null,
       timestamp: l.timestamp,
       ip: l.ip,
       documentId: l.documentId,
-      documentName: l.documentName
+      documentName: l.documentName,
+      metadata: l.metadata || undefined
     })),
     rejectionComment: doc.rejectionComment
   };

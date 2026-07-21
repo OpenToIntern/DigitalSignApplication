@@ -22,10 +22,11 @@ function normalizeAuditUser(user: any) {
 }
 
 export default function AuditLogPage() {
-  const { token } = useApp()
+  const { token, logout } = useApp()
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isAuthExpired, setIsAuthExpired] = useState(false)
   const [search, setSearch] = useState('')
   const [filterEvent, setFilterEvent] = useState<string>('all')
 
@@ -36,17 +37,24 @@ export default function AuditLogPage() {
     try {
       setLoading(true)
       setError(null)
+      setIsAuthExpired(false)
       const res = await fetch(`${apiBase}/audit-logs`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       })
+      if (res.status === 401 || res.status === 403) {
+        setIsAuthExpired(true)
+        setError('Session expired, please log in again')
+        return
+      }
       if (!res.ok) throw new Error('Failed to fetch audit logs')
       const data = await res.json()
       const mapped: AuditLogEntry[] = data.map((log: any) => ({
         id: log.id,
         event: log.event,
         user: normalizeAuditUser(log.user),
+        userId: log.userId || null,
         timestamp: log.timestamp,
         ip: log.ip,
         documentId: log.documentId,
@@ -69,9 +77,12 @@ export default function AuditLogPage() {
   const events = Array.from(new Set(logs.map(l => l.event)))
 
   const filteredLogs = logs.filter(log => {
-    const matchesSearch = log.documentName?.toLowerCase().includes(search.toLowerCase()) ||
-      log.user?.name.toLowerCase().includes(search.toLowerCase()) ||
-      log.ip.includes(search)
+    const searchLower = search.toLowerCase()
+    const matchesSearch =
+      (log.documentName && log.documentName.toLowerCase().includes(searchLower)) ||
+      (log.user?.name && log.user.name.toLowerCase().includes(searchLower)) ||
+      (log.ip && log.ip.toLowerCase().includes(searchLower)) ||
+      (log.documentId && log.documentId.toLowerCase().includes(searchLower))
     
     const matchesEvent = filterEvent === 'all' || log.event === filterEvent
 
@@ -103,7 +114,7 @@ export default function AuditLogPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
             <input
               type="text"
-              placeholder="Search by user, IP, or document..."
+              placeholder="Search by user, IP, document, or ID..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="input-field pl-10"
@@ -133,7 +144,11 @@ export default function AuditLogPage() {
             <div className="flex flex-col items-center justify-center py-16 text-red-500">
               <ClipboardList size={32} className="mb-3 opacity-40" />
               <p className="text-sm font-semibold">{error}</p>
-              <button onClick={fetchLogs} className="btn-ghost text-xs mt-3">Try Again</button>
+              {isAuthExpired ? (
+                <button onClick={logout} className="btn-primary text-xs mt-3">Log In Again</button>
+              ) : (
+                <button onClick={fetchLogs} className="btn-ghost text-xs mt-3">Try Again</button>
+              )}
             </div>
           ) : (
             <AuditPanel entries={filteredLogs} />

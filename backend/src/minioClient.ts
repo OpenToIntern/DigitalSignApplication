@@ -52,13 +52,17 @@ export async function uploadDocumentToMinio(
   metaData: Record<string, string>
 ): Promise<string> {
   const encrypted = encryptBuffer(fileBuffer);
+  const uploadMetaData = {
+    ...metaData,
+    'X-Amz-Server-Side-Encryption': 'AES256'
+  };
   return new Promise((resolve, reject) => {
     minioClient.putObject(
       BUCKET_NAME,
       fileKey,
       encrypted,
       encrypted.length,
-      metaData,
+      uploadMetaData,
       (err, objInfo) => {
         if (err) {
           reject(err);
