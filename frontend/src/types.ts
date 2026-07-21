@@ -15,6 +15,7 @@ export interface AuditLogEntry {
   id: string
   event: string
   user: User | null
+  userId?: string | null
   timestamp: Date | string
   ip: string
   documentId?: string
@@ -25,6 +26,16 @@ export interface AuditLogEntry {
     baselineHash?: string
     reason?: string
     action?: string
+    // DOCUMENT_SIGNED metadata fields (server-generated)
+    signerId?: string
+    ipAddress?: string
+    timestamp?: string
+    issuer?: string
+    validFrom?: string
+    validTo?: string
+    serialNumber?: string
+    hash?: string
+    signatureEvidence?: string
   }
 }
 

@@ -25,6 +25,8 @@ function requireEnv(name: string): string {
 }
 
 const JWT_SECRET = requireEnv('JWT_SECRET');
+const GOOGLE_REDIRECT_URI = requireEnv('GOOGLE_REDIRECT_URI');
+const FRONTEND_URL = requireEnv('FRONTEND_URL');
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -85,12 +87,13 @@ async function createAndSendNotification(
         subject = `Update on document '${documentName}'`;
       }
 
+      console.log(`[Email Debug] Link: ${FRONTEND_URL}/documents/${documentId}/editor`);
       await transporter.sendMail({
         from: `"SignHere Portal" <${process.env.SMTP_USER}>`,
         to: googleEmail,
         subject: subject,
         text: `Hello,\n\n${message}\n\nPlease visit the portal to review and sign.\n\nBest regards,\nSignHere Portal Team`,
-        html: `<p>Hello,</p><p>${message}</p><p>Please <a href="http://localhost:5173/documents/${documentId}/editor">click here to review and sign</a>.</p><p>Best regards,<br/>SignHere Portal Team</p>`,
+        html: `<p>Hello,</p><p>${message}</p><p>Please <a href="${FRONTEND_URL}/documents/${documentId}/editor">click here to review and sign</a>.</p><p>Best regards,<br/>SignHere Portal Team</p>`,
       });
       console.log(`✉️ Notification email successfully sent to ${googleEmail}`);
     } catch (emailErr) {
@@ -273,7 +276,7 @@ app.post('/api/auth/google', async (req: Request, res: Response): Promise<any> =
       const client = new OAuth2Client(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
-        'http://localhost:5173/auth/callback'
+        GOOGLE_REDIRECT_URI
       );
 
       // Exchange auth code for tokens
@@ -507,7 +510,7 @@ app.post('/api/auth/verify-otp', async (req: Request, res: Response): Promise<an
     }
 
     // Validate code
-    if (session.otp !== String(otp).trim() && String(otp).trim() !== '123456') {
+    if (session.otp !== String(otp).trim()) {
       const remaining = 5 - session.attempts;
       return res.status(401).json({ error: `Incorrect OTP code. Attempts remaining: ${remaining}.` });
     }
@@ -736,25 +739,58 @@ app.post('/api/documents/upload', authenticateJWT, upload.single('file'), async 
     const crypto = require('crypto');
     const hash = crypto.createHash('sha256').update(file.buffer).digest('hex');
 
-    // 3. Save document record in PostgreSQL
-    const doc = await prisma.document.create({
-      data: {
-        id: documentId,
-        name: file.originalname,
-        category: category || 'General',
-        size: `${(file.size / 1024).toFixed(0)} KB`,
-        status: 'draft',
-        senderId: senderId,
-        fileKey: fileKey,
-        baselineHash: hash,
-        pageCount: 1, // Will be computed on client
-      },
-      include: {
-        sender: true
-      }
-    });
+    // 3. Save document record and create its initial audit log record atomically in a transaction
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
 
-    res.status(201).json(doc);
+    try {
+      const doc = await prisma.$transaction(async (tx) => {
+        const newDoc = await tx.document.create({
+          data: {
+            id: documentId,
+            name: file.originalname,
+            category: category || 'General',
+            size: `${(file.size / 1024).toFixed(0)} KB`,
+            status: 'draft',
+            senderId: senderId,
+            fileKey: fileKey,
+            baselineHash: hash,
+            pageCount: 1,
+          },
+          include: {
+            sender: true
+          }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            documentId: documentId,
+            event: 'DOCUMENT_UPLOADED',
+            userId: senderId,
+            ip: clientIp,
+            metadata: {
+              algorithm: 'SHA-256',
+              hash: hash,
+              documentStatus: 'draft'
+            }
+          }
+        });
+
+        return newDoc;
+      });
+
+      res.status(201).json(doc);
+    } catch (dbError: any) {
+      console.error('Database transaction failed during upload, cleaning up uploaded MinIO file...', dbError);
+      
+      try {
+        await minioClient.removeObject(BUCKET_NAME, fileKey);
+        console.log(`Successfully cleaned up orphaned MinIO object: ${fileKey}`);
+      } catch (minioDelError) {
+        console.error(`FAILED to clean up MinIO object: ${fileKey}`, minioDelError);
+      }
+
+      res.status(500).json({ error: dbError.message || 'Failed to save document metadata and audit log.' });
+    }
   } catch (error: any) {
     console.error('Upload Error:', error);
     res.status(500).json({ error: error.message });
@@ -1338,6 +1374,10 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
 
     // 1. Transaction to update document and replace markers/audit logs
     const result = await prisma.$transaction(async (tx) => {
+      const serverSignTimestamp = new Date();
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+      const authenticatedSignerId = req.user!.id;
+
       // Update basic fields
       const updatedDoc = await tx.document.update({
         where: { id },
@@ -1350,16 +1390,29 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
         }
       });
 
+      // Server-side DOCUMENT_LOCKED event creation
+      if (status === 'locked' && existing.status !== 'locked') {
+        await tx.auditLog.create({
+          data: {
+            id: `al-${Date.now()}-locked`,
+            documentId: id,
+            event: 'DOCUMENT_LOCKED',
+            userId: null,
+            timestamp: serverSignTimestamp,
+            ip: 'system',
+            metadata: {
+              action: 'Auto-locked after final signature'
+            }
+          }
+        });
+      }
+
       // Update markers if provided
       if (markers !== undefined) {
         // FR-011: Build lookup of existing markers to detect new signatures
         const existingMarkerMap = new Map(existing.markers.map((m: any) => [m.id, m]));
 
         // FR-011: Determine next sequential cert ID within this transaction.
-        // NOTE (accepted simplification for PoC): Prisma interactive transactions use
-        // PostgreSQL's default Read Committed isolation. A race condition is theoretically
-        // possible under extreme concurrency, but negligible for this PoC's sequential
-        // supervisor→manager signing flow. Full protection would require Serializable isolation.
         const currentYear = new Date().getFullYear();
         const allSignedMarkersForSeq = await tx.marker.findMany({
           where: { signed: true, metadata: { not: undefined } }
@@ -1376,11 +1429,6 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
           }
         }
         let nextSeq = maxSeq + 1;
-
-        // FR-011: Capture server-side signing context
-        const serverSignTimestamp = new Date();
-        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
-        const authenticatedSignerId = req.user!.id;
 
         // Delete all old markers for this document
         await tx.marker.deleteMany({
@@ -1428,6 +1476,24 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
               signatureEvidence = signBuffer.toString('base64');
             }
 
+            // Parse certificate details natively via crypto.X509Certificate
+            let issuer = 'unknown';
+            let validFrom = 'unknown';
+            let validTo = 'unknown';
+            let serialNumber = 'unknown';
+
+            if (userCert) {
+              try {
+                const x509 = new crypto.X509Certificate(userCert);
+                issuer = x509.issuer;
+                validFrom = x509.validFrom;
+                validTo = x509.validTo;
+                serialNumber = x509.serialNumber;
+              } catch (err) {
+                console.error('Error parsing X509 certificate:', err);
+              }
+            }
+
             // Server-authoritative metadata overwrites client-fabricated values
             finalMetadata = {
               ...(m.metadata || {}),
@@ -1439,6 +1505,31 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
               certificateUsed: userCert
             };
             finalSignedAt = serverSignTimestamp;
+
+            // Create backend-authoritative DOCUMENT_SIGNED audit log
+            await tx.auditLog.create({
+              data: {
+                id: `al-${Date.now()}-signed-${m.id}`,
+                documentId: id,
+                event: 'DOCUMENT_SIGNED',
+                userId: authenticatedSignerId,
+                timestamp: serverSignTimestamp,
+                ip: clientIp,
+                metadata: {
+                  certId,
+                  algorithm: 'SHA-256',
+                  signerId: authenticatedSignerId,
+                  ipAddress: clientIp,
+                  timestamp: serverSignTimestamp.toISOString(),
+                  issuer,
+                  validFrom,
+                  validTo,
+                  serialNumber,
+                  signatureEvidence,
+                  hash: existing.baselineHash
+                }
+              }
+            });
           }
 
           await tx.marker.create({
@@ -1505,7 +1596,12 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
         const existingLogs = await tx.auditLog.findMany({ where: { documentId: id } });
         const existingIds = new Set(existingLogs.map(l => l.id));
 
-        for (const log of auditLog) {
+        // Filter out signature/lock events from client-supplied logs
+        const filteredAuditLog = auditLog.filter(
+          (log: any) => log.event !== 'DOCUMENT_SIGNED' && log.event !== 'DOCUMENT_LOCKED'
+        );
+
+        for (const log of filteredAuditLog) {
           if (!existingIds.has(log.id)) {
             let finalIp = log.ip || 'unknown';
             if (finalIp === 'server-injected' || finalIp === '192.168.1.108') {

@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History, AlertTriangle, Loader2, Eye, EyeOff } from 'lucide-react'
 
 
@@ -21,6 +21,18 @@ export default function Landing() {
   const [formLoading, setFormLoading] = useState(false)
 
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Handle errors passed from OAuth callback redirection
+  useEffect(() => {
+    if (location.state?.error) {
+      setFormError(location.state.error);
+      setShowAuthDialog(true);
+      setAuthMode('login');
+      // Clear navigation state to prevent persistence on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
 
 
   const handleGoogleLogin = () => {

@@ -374,41 +374,16 @@ export default function DocumentEditor() {
     markersRef.current = updatedMarkers
     setShowSign(false)
 
-    const newAuditLog = [
-      ...(doc.auditLog || []),
-      {
-        id: `al-${Date.now()}`,
-        event: 'DOCUMENT_SIGNED',
-        user: currentUser!,
-        timestamp: now,
-        ip: 'server-injected',
-        documentId: doc.id,
-        documentName: doc.name,
-        metadata: { certId, algorithm: 'SHA-256' },
-      }
-    ]
-
     let nextStatus = doc.status
     if (isSupervisor) {
       nextStatus = 'pending_manager'
     } else if (isManager) {
       nextStatus = 'locked'
-      newAuditLog.push({
-        id: `al-${Date.now() + 1}`,
-        event: 'DOCUMENT_LOCKED',
-        user: null,
-        timestamp: now,
-        ip: 'system',
-        documentId: doc.id,
-        documentName: doc.name,
-        metadata: { action: 'Auto-locked after final signature' }
-      })
     }
 
     await updateDocument(doc.id, {
       markers: updatedMarkers,
       status: nextStatus,
-      auditLog: newAuditLog,
       updatedAt: now,
     })
 
