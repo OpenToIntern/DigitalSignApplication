@@ -114,7 +114,7 @@ export default function OtpVerification() {
 
     try {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-      const res = await fetch(`${apiBase}/resend-otp` || `${apiBase}/auth/resend-otp`, {
+      const res = await fetch(`${apiBase}/auth/resend-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

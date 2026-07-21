@@ -7,6 +7,7 @@ import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { authenticateJWT, AuthenticatedRequest } from './middleware/authMiddleware';
 import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, minioClient, BUCKET_NAME, getDocumentBufferFromMinio } from './minioClient';
 import { compositeSignatures } from './services/pdfComposer';
@@ -112,17 +113,36 @@ app.use(express.json({ limit: '10mb' }));
 // Seed mock users into the database
 async function seedMockUsers() {
   const mockUsers = [
-    { id: 'u-001', name: 'Richie Frederico Wong', email: 'richie.wong@companyx.com', googleEmail: 'staffcompanyx@gmail.com', accessRole: 'user' },
-    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'inria.kalalo@companyx.com', googleEmail: 'supervisorcompanyx@gmail.com', accessRole: 'supervisor' },
-    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jesynta.harya@companyx.com', googleEmail: 'managercompanyx@gmail.com', accessRole: 'manager' },
-    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user' }
+    { id: 'u-001', name: 'Richie Frederico Wong', email: 'richie.wong@companyx.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: false },
+    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'inria.kalalo@companyx.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true },
+    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jesynta.harya@companyx.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true },
+    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: false }
   ];
 
   for (const user of mockUsers) {
+    const existing = await prisma.user.findUnique({ where: { email: user.email } });
+    const passwordHash = user.password && (!existing || !existing.passwordHash) 
+      ? await bcrypt.hash(user.password, 12) 
+      : (existing ? existing.passwordHash : null);
+
     await prisma.user.upsert({
       where: { email: user.email },
-      update: { name: user.name, googleEmail: user.googleEmail, accessRole: user.accessRole },
-      create: user
+      update: { 
+        name: user.name, 
+        googleEmail: user.googleEmail, 
+        accessRole: user.accessRole,
+        passwordHash: passwordHash,
+        nikVerified: user.nikVerified
+      },
+      create: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        googleEmail: user.googleEmail,
+        accessRole: user.accessRole,
+        passwordHash: passwordHash,
+        nikVerified: user.nikVerified
+      }
     });
   }
   console.log('Mock users seeded/upserted in database.');
@@ -174,15 +194,18 @@ async function sendMfaOtp(user: any, res: Response): Promise<any> {
     attempts: 0,
   });
 
-  // Log the OTP clearly to backend console
-  console.log(`\n========================================================================\n=== OTP for ${user.name} (${user.googleEmail || 'No Google Email'}): ${otp} (expires in 5 min) ===\n========================================================================\n`);
+  // The delivery email: prefer googleEmail, fall back to regular email (for manual auth users)
+  const deliveryEmail = user.googleEmail || user.email || null;
 
-  // Send OTP email using nodemailer if googleEmail exists
-  if (user.googleEmail) {
+  // Log the OTP clearly to backend console
+  console.log(`\n========================================================================\n=== OTP for ${user.name} (${deliveryEmail || 'No email'}): ${otp} (expires in 5 min) ===\n========================================================================\n`);
+
+  // Send OTP email if we have any delivery address
+  if (deliveryEmail) {
     try {
       await transporter.sendMail({
         from: `"SignHere Portal" <${process.env.SMTP_USER}>`,
-        to: user.googleEmail,
+        to: deliveryEmail,
         subject: 'Your SignHere Multi-Factor Authentication Code',
         text: `Hello ${user.name},\n\nYour 6-digit Multi-Factor Authentication code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nIf you did not request this, please secure your account.`,
         html: `<p>Hello <strong>${user.name}</strong>,</p><p>Your 6-digit Multi-Factor Authentication code is: <strong style="font-size: 1.2rem; color: #4285F4;">${otp}</strong></p><p>This code will expire in 5 minutes.</p>`,
@@ -205,6 +228,28 @@ async function sendMfaOtp(user: any, res: Response): Promise<any> {
   });
 }
 
+// Shared post-authentication handler — used by BOTH Google OAuth and manual email/password auth.
+// Checks NIK verification status and routes accordingly:
+//   nikVerified=false  → issue nikPending temp token (→ /verify-nik)
+//   nikVerified=true   → skip straight to OTP  (→ /verify-otp)
+// This ensures BOTH auth methods go through the EXACT same downstream flow.
+async function handlePostAuth(user: any, res: Response): Promise<any> {
+  if (!user.nikVerified) {
+    const tempToken = jwt.sign(
+      { userId: user.id, nikPending: true },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    return res.json({
+      nikPending: true,
+      tempToken,
+    });
+  }
+
+  // NIK already verified — go straight to OTP
+  return sendMfaOtp(user, res);
+}
+
 // POST /api/auth/google
 app.post('/api/auth/google', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -216,9 +261,9 @@ app.post('/api/auth/google', async (req: Request, res: Response): Promise<any> =
     let email = '';
     if (typeof code === 'string' && code.startsWith('mock-code-')) {
       const emailMap: Record<string, string> = {
-        'mock-code-staff': 'staffcompanyx@gmail.com',
-        'mock-code-supervisor': 'supervisorcompanyx@gmail.com',
-        'mock-code-manager': 'managercompanyx@gmail.com',
+        'mock-code-staff': 'jesyntaivolairia05@gmail.com',
+        'mock-code-supervisor': 'cheritablemoney@gmail.com',
+        'mock-code-manager': 'jessyharia05@gmail.com',
       };
       email = emailMap[code] || '';
       if (!email) {
@@ -258,23 +303,112 @@ app.post('/api/auth/google', async (req: Request, res: Response): Promise<any> =
       return res.status(403).json({ error: 'This Google account is not registered as a signatory in this system.' });
     }
 
-    // Check if NIK is verified
-    if (!user.nikVerified) {
-      const tempToken = jwt.sign(
-        { userId: user.id, nikPending: true },
-        JWT_SECRET,
-        { expiresIn: '5m' }
-      );
-      return res.json({
-        nikPending: true,
-        tempToken,
-      });
-    }
-
-    return await sendMfaOtp(user, res);
+    // Route through the shared post-auth handler (NIK check → OTP)
+    return await handlePostAuth(user, res);
   } catch (error: any) {
     console.error('Google Auth Error:', error);
     res.status(500).json({ error: error.message || 'Authentication failed.' });
+  }
+});
+
+// POST /api/auth/register — manual email/password sign-up
+// Creates a new User (role defaults to 'user'/Staff) and immediately
+// routes through handlePostAuth, which forces NIK verification first.
+app.post('/api/auth/register', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { fullName, email, password } = req.body;
+
+    // Input validation
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ error: 'Full name, email, and password are all required.' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address format.' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check for existing account
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email address already exists. Please log in instead.' });
+    }
+
+    // Hash password with bcrypt (12 salt rounds)
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Create the new user — role defaults to 'user' (Staff signatory).
+    // googleEmail is left null since this is a manual account.
+    // nikVerified defaults false, so handlePostAuth will route to NIK verification.
+    const newUser = await prisma.user.create({
+      data: {
+        name: fullName.trim(),
+        email: normalizedEmail,
+        googleEmail: null,
+        accessRole: 'user',
+        nikVerified: false,
+        passwordHash,
+      },
+    });
+
+    console.log(`✅ New manual account registered: ${newUser.email} (id: ${newUser.id})`);
+
+    // Route through the shared post-auth handler — new user always hits NIK first
+    return await handlePostAuth(newUser, res);
+  } catch (error: any) {
+    console.error('Register Error:', error);
+    res.status(500).json({ error: error.message || 'Registration failed.' });
+  }
+});
+
+// POST /api/auth/login — manual email/password sign-in
+// Verifies credentials, then routes through the SAME handlePostAuth as Google OAuth.
+app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Look up user by email or googleEmail
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          { googleEmail: normalizedEmail }
+        ]
+      }
+    });
+
+    // Use a generic error to avoid user enumeration
+    if (!user || !user.passwordHash) {
+      return res.status(401).json({ error: 'Invalid email or password. Please check your credentials and try again.' });
+    }
+
+    // Compare submitted password against stored bcrypt hash
+    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: 'Invalid email or password. Please check your credentials and try again.' });
+    }
+
+    console.log(`✅ Manual login successful: ${user.email} (id: ${user.id})`);
+
+    // Route through the shared post-auth handler:
+    //   - If nikVerified=false → NIK step
+    //   - If nikVerified=true  → skip to OTP
+    return await handlePostAuth(user, res);
+  } catch (error: any) {
+    console.error('Login Error:', error);
+    res.status(500).json({ error: error.message || 'Login failed.' });
   }
 });
 
@@ -444,13 +578,15 @@ app.post('/api/auth/resend-otp', async (req: Request, res: Response): Promise<an
       attempts: 0,
     });
 
-    console.log(`\n========================================================================\n=== RESENT OTP for ${user.name} (${user.googleEmail || 'No Google Email'}): ${otp} (expires in 5 min) ===\n========================================================================\n`);
+    console.log(`\n========================================================================\n=== RESENT OTP for ${user.name} (${user.googleEmail || user.email || 'No email'}): ${otp} (expires in 5 min) ===\n========================================================================\n`);
 
-    if (user.googleEmail) {
+    // Deliver to googleEmail if available, otherwise fall back to regular email (manual accounts)
+    const deliveryEmail = user.googleEmail || user.email || null;
+    if (deliveryEmail) {
       try {
         await transporter.sendMail({
           from: `"SignHere Portal" <${process.env.SMTP_USER}>`,
-          to: user.googleEmail,
+          to: deliveryEmail,
           subject: 'Your New SignHere Multi-Factor Authentication Code',
           text: `Hello ${user.name},\n\nYour new 6-digit Multi-Factor Authentication code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nIf you did not request this, please secure your account.`,
           html: `<p>Hello <strong>${user.name}</strong>,</p><p>Your new 6-digit Multi-Factor Authentication code is: <strong style="font-size: 1.2rem; color: #4285F4;">${otp}</strong></p><p>This code will expire in 5 minutes.</p>`,
