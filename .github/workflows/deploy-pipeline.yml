@@ -12,7 +12,7 @@ jobs:
       - name: Set deploy path
         id: config
         run: |
-          if [ "${{ github.ref_name }}" = "main"]; then
+          if [ "${{ github.ref_name }}" = "main" ]; then
             echo "path=/var/www/signhere-production/app" >> "$GITHUB_OUTPUT"
             echo "env=production" >> "$GITHUB_OUTPUT"
           else
@@ -25,7 +25,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd ${{ steps.config.outputs.path }}
