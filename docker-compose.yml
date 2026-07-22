@@ -1,34 +1,27 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: digital-sign-postgres
     environment:
       POSTGRES_USER: signuser
       POSTGRES_PASSWORD: signpassword
       POSTGRES_DB: signdb
     ports:
-      - "5432:5432"
+      - "5437:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
-
   minio:
     image: minio/minio:latest
-    container_name: digital-sign-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - miniodata:/data
     restart: unless-stopped
-
 volumes:
   pgdata:
   miniodata:
