@@ -24,11 +24,8 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          envs: DEPLOY_PATH,BRANCH_NAME
           script: |
-            export DEPLOY_PATH="${{ steps.config.outputs.path }}"
-            export BRANCH_NAME="${{ github.ref_name }}"
-            cd $DEPLOY_PATH
-            bash deploy.sh
+            cd ${{ steps.config.outputs.path }}
+            bash deploy.sh ${{ github.ref_name }}
       - name: Summary
         run: echo "Deployed **${{ steps.config.outputs.env }}**"
