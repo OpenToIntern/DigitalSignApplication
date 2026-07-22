@@ -32,7 +32,7 @@ jobs:
             cd ${{ steps.config.outputs.path }} || { echo "cd FAILED"; exit 1; }
             echo "Current dir: $(pwd)"
             ls -la deploy.sh
-            bash deploy.sh ${{ github.ref_name }}
+            bash deploy.sh ${{ github.ref_name }} ${{ steps.config.outputs.env }}
 
       - name: Summary
         run: echo "Deployed **${{ steps.config.outputs.env }}**"
