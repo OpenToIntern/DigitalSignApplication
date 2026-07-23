@@ -17,6 +17,7 @@ jobs:
             echo "path=/var/www/signhere-sandbox/app" >> "$GITHUB_OUTPUT"
             echo "env=sandbox" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -25,7 +26,13 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd ${{ steps.config.outputs.path }}
-            bash deploy.sh ${{ github.ref_name }}
+            set -e
+            echo "Connected as: $(whoami)"
+            echo "Target path: ${{ steps.config.outputs.path }}"
+            cd ${{ steps.config.outputs.path }} || { echo "cd FAILED"; exit 1; }
+            echo "Current dir: $(pwd)"
+            ls -la deploy.sh
+            bash deploy.sh ${{ github.ref_name }} ${{ steps.config.outputs.env }}
+
       - name: Summary
         run: echo "Deployed **${{ steps.config.outputs.env }}**"

@@ -119,33 +119,43 @@ async function seedMockUsers() {
     { id: 'u-001', name: 'Richie Frederico Wong', email: 'richie.wong@companyx.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: false },
     { id: 'u-002', name: 'Inria Altje Kalalo', email: 'inria.kalalo@companyx.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true },
     { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jesynta.harya@companyx.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true },
-    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: false }
+    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: false },
+    // --- Lecturer review accounts (permanent, seeded on every startup) ---
+    { id: null, name: 'Farah Manager', email: 'farahyulianti.tech21@gmail.com', googleEmail: 'farahyulianti.tech21@gmail.com', accessRole: 'manager', password: 'ManagerReview2026', nikVerified: true },
+    { id: null, name: 'Farah Supervisor', email: 'reviewfarmei20@gmail.com', googleEmail: 'reviewfarmei20@gmail.com', accessRole: 'supervisor', password: 'SupervisorReview2026', nikVerified: true },
+    { id: null, name: 'Farah Yulianti', email: 'serpentclaw22@gmail.com', googleEmail: 'serpentclaw22@gmail.com', accessRole: 'user', password: 'StaffReview2026', nikVerified: false },
   ];
 
   for (const user of mockUsers) {
     const existing = await prisma.user.findUnique({ where: { email: user.email } });
-    const passwordHash = user.password && (!existing || !existing.passwordHash) 
-      ? await bcrypt.hash(user.password, 12) 
+    // Only hash password if account is new (no existing hash) — never overwrite a user's current hash
+    const passwordHash = user.password && (!existing || !existing.passwordHash)
+      ? await bcrypt.hash(user.password, 12)
       : (existing ? existing.passwordHash : null);
+    // Preserve nikVerified from DB if already true — never downgrade a verified account on restart
+    const nikVerified = existing ? (existing.nikVerified || user.nikVerified) : user.nikVerified;
+
+    // Build create payload — only include id if one is specified (auto-generate for Farah accounts)
+    const createData: any = {
+      name: user.name,
+      email: user.email,
+      googleEmail: user.googleEmail,
+      accessRole: user.accessRole,
+      passwordHash: passwordHash,
+      nikVerified: user.nikVerified
+    };
+    if (user.id) createData.id = user.id;
 
     await prisma.user.upsert({
       where: { email: user.email },
-      update: { 
-        name: user.name, 
-        googleEmail: user.googleEmail, 
-        accessRole: user.accessRole,
-        passwordHash: passwordHash,
-        nikVerified: user.nikVerified
-      },
-      create: {
-        id: user.id,
+      update: {
         name: user.name,
-        email: user.email,
         googleEmail: user.googleEmail,
         accessRole: user.accessRole,
         passwordHash: passwordHash,
-        nikVerified: user.nikVerified
-      }
+        nikVerified: nikVerified
+      },
+      create: createData
     });
   }
   console.log('Mock users seeded/upserted in database.');
@@ -153,7 +163,10 @@ async function seedMockUsers() {
   const mockDukcapil = [
     { nik: '3175010101990001', fullName: 'Richie Frederico Wong', dateOfBirth: '1999-01-01' },
     { nik: '3175020202920002', fullName: 'Inria Altje Kalalo', dateOfBirth: '1992-02-02' },
-    { nik: '3175030303930003', fullName: 'Jesynta Ivolaria Harya', dateOfBirth: '1993-03-03' }
+    { nik: '3175030303930003', fullName: 'Jesynta Ivolaria Harya', dateOfBirth: '1993-03-03' },
+    { nik: '1234567890123001', fullName: 'Farah Manager', dateOfBirth: '1980-01-01' },
+    { nik: '1234567890123002', fullName: 'Farah Supervisor', dateOfBirth: '1985-05-05' },
+    { nik: '1234567890123003', fullName: 'Farah Yulianti', dateOfBirth: '1990-07-07' },
   ];
 
   for (const record of mockDukcapil) {
@@ -781,7 +794,7 @@ app.post('/api/documents/upload', authenticateJWT, upload.single('file'), async 
       res.status(201).json(doc);
     } catch (dbError: any) {
       console.error('Database transaction failed during upload, cleaning up uploaded MinIO file...', dbError);
-      
+
       try {
         await minioClient.removeObject(BUCKET_NAME, fileKey);
         console.log(`Successfully cleaned up orphaned MinIO object: ${fileKey}`);
@@ -837,7 +850,7 @@ app.post('/api/documents/verify', authenticateJWT, upload.single('file'), async 
         storedHash = candidate.baselineHash;
         break;
       }
-      
+
       // Case B: Completed/locked document — check signedFileHash first (fast, indexed)
       if (candidate.status === 'locked') {
         if (candidate.signedFileHash && candidate.signedFileHash === computedHash) {
@@ -890,8 +903,8 @@ app.post('/api/documents/verify', authenticateJWT, upload.single('file'), async 
       if (matchByHash) {
         doc = matchByHash;
         // Determine which hash matched
-        storedHash = matchByHash.signedFileHash === computedHash 
-          ? matchByHash.signedFileHash 
+        storedHash = matchByHash.signedFileHash === computedHash
+          ? matchByHash.signedFileHash
           : matchByHash.baselineHash;
       }
     }
@@ -930,7 +943,7 @@ app.post('/api/documents/verify', authenticateJWT, upload.single('file'), async 
     // For each signatory who was supposed to sign, find if they signed, and check their marker status.
     const signers = doc.signatories.map((sig: any) => {
       const marker = doc.markers.find((m: any) => m.assignedToId === sig.userId && m.type === 'signature');
-      
+
       let signatureAuthentic = false;
       if (marker && marker.signed && marker.metadata) {
         const meta = marker.metadata as any;
