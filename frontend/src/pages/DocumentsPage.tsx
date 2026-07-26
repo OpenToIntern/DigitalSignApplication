@@ -5,7 +5,6 @@ import AppLayout from '../components/AppLayout'
 import UploadModal from '../components/UploadModal'
 import { useApp } from '../context/AppContext'
 import type { Document } from '../types'
-import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
 
 function StatusBadge({ status }: { status: Document['status'] }) {
   const map: Record<Document['status'], React.ReactNode> = {

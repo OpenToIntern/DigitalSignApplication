@@ -185,3 +185,71 @@ export function validateTransition(
 
   return { valid: true };
 }
+
+/**
+ * Validates that:
+ * 1. At least one signature marker exists.
+ * 2. Each recipient has at least one marker specifically assigned to them (directly or via fallback mapping).
+ */
+export function validateMarkersAndRecipients(
+  markers: any[],
+  recipients: any[],
+  userMap: Map<string, any>
+): { valid: boolean; error?: string } {
+  if (!markers || markers.length === 0) {
+    return {
+      valid: false,
+      error: 'Cannot send invitations: At least one signature marker must be placed on the document.',
+    };
+  }
+
+  if (!recipients || recipients.length === 0) {
+    return {
+      valid: false,
+      error: 'Cannot send invitations: The document has no recipients.',
+    };
+  }
+
+  const recipientEmails = recipients.map((r: any) => String(r.email || '').trim().toLowerCase());
+
+  const hasMarkersForAll = recipients.every((recipient: any) => {
+    const recipientEmail = String(recipient.email || '').trim().toLowerCase();
+
+    return markers.some((m: any) => {
+      let markerEmail = '';
+      if (m.assignedTo?.email) {
+        markerEmail = String(m.assignedTo.email).trim().toLowerCase();
+      } else {
+        const userId = m.assignedToId || m.assignedTo?.id;
+        if (userId) {
+          const rUser = recipients.find((r: any) => r.id === userId);
+          if (rUser) {
+            markerEmail = String(rUser.email || '').trim().toLowerCase();
+          } else {
+            const dbUser = userMap.get(userId);
+            if (dbUser) {
+              markerEmail = String(dbUser.email || '').trim().toLowerCase();
+                }
+              }
+            }
+          }
+
+      if (markerEmail) {
+        if (markerEmail === recipientEmail) {
+          return true;
+        }
+      }
+      return false;
+    });
+  });
+
+  if (!hasMarkersForAll) {
+    return {
+      valid: false,
+      error: 'Cannot send invitations: Each recipient must have at least one signature marker specifically assigned to them.',
+    };
+  }
+
+  return { valid: true };
+}
+

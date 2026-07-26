@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { X, Pen, Upload, Type, CheckCircle, RefreshCw, Trash2 } from 'lucide-react'
 import type { SignatureData } from '../types'
-import { SIGNATURE_STYLES } from '../constants/mockData'
+import { SIGNATURE_STYLES } from '../constants/signatureStyles'
 import { useApp } from '../context/AppContext'
 
 interface SignatureModalProps {
