@@ -1,22 +1,22 @@
-import { validateTransition } from './documentStateMachine';
+import { validateTransition, validateMarkersAndRecipients } from './documentStateMachine';
 
 function runTests() {
   console.log('=== STARTING STATE MACHINE UNIT TESTS ===\n');
 
   // Mock users directory map
   const userMap = new Map<string, any>([
-    ['staff-1', { id: 'staff-1', name: 'Richie', accessRole: 'user' }],
-    ['staff-2', { id: 'staff-2', name: 'Ricky', accessRole: 'user' }],
-    ['spv-1', { id: 'spv-1', name: 'Inria', accessRole: 'supervisor' }],
-    ['spv-2', { id: 'spv-2', name: 'Supervisor 2', accessRole: 'supervisor' }],
-    ['mgr-1', { id: 'mgr-1', name: 'Jesynta', accessRole: 'manager' }],
-    ['mgr-2', { id: 'mgr-2', name: 'Manager 2', accessRole: 'manager' }],
+    ['staff-1', { id: 'staff-1', name: 'Richie', email: 'staff1@company.com', accessRole: 'user' }],
+    ['staff-2', { id: 'staff-2', name: 'Ricky', email: 'staff2@company.com', accessRole: 'user' }],
+    ['spv-1', { id: 'spv-1', name: 'Inria', email: 'spv1@company.com', accessRole: 'supervisor' }],
+    ['spv-2', { id: 'spv-2', name: 'Supervisor 2', email: 'spv2@company.com', accessRole: 'supervisor' }],
+    ['mgr-1', { id: 'mgr-1', name: 'Jesynta', email: 'mgr1@company.com', accessRole: 'manager' }],
+    ['mgr-2', { id: 'mgr-2', name: 'Manager 2', email: 'mgr2@company.com', accessRole: 'manager' }],
   ]);
 
   // Mock signatories list
   const signatories = [
-    { user: { id: 'spv-1', accessRole: 'supervisor' } },
-    { user: { id: 'mgr-1', accessRole: 'manager' } },
+    { user: { id: 'spv-1', email: 'spv1@company.com', accessRole: 'supervisor' } },
+    { user: { id: 'mgr-1', email: 'mgr1@company.com', accessRole: 'manager' } },
   ];
 
   // Base mockup document
@@ -115,7 +115,39 @@ function runTests() {
   console.assert(res.valid === false && res.httpStatus === 400, 'Case 16 failed');
   console.log('✅ PASS: Case 16 - Transition out of terminal state (locked -> draft) is rejected with 400');
 
-  console.log('\n=== ALL 16 TESTS PASSED SUCCESSFULLY ===');
+  // Test Case 17: validateMarkersAndRecipients - empty markers list fails
+  let check = validateMarkersAndRecipients([], signatories.map(s => s.user), userMap);
+  console.assert(check.valid === false && check.error?.includes('At least one signature marker must be placed'), 'Case 17 failed');
+  console.log('✅ PASS: Case 17 - Empty markers list is rejected');
+
+  // Test Case 18: validateMarkersAndRecipients - empty recipients list fails
+  check = validateMarkersAndRecipients(baseDoc.markers, [], userMap);
+  console.assert(check.valid === false && check.error?.includes('The document has no recipients'), 'Case 18 failed');
+  console.log('✅ PASS: Case 18 - Empty recipients list is rejected');
+
+  // Test Case 19: validateMarkersAndRecipients - successful validation when all recipients have markers
+  check = validateMarkersAndRecipients(baseDoc.markers, signatories.map(s => s.user), userMap);
+  console.assert(check.valid === true, 'Case 19 failed');
+  console.log('✅ PASS: Case 19 - Valid markers and recipients configuration passes');
+
+  // Test Case 20: validateMarkersAndRecipients - missing marker for one recipient fails
+  const incompleteMarkers = [
+    { id: 'm-spv', assignedToId: 'spv-1' }
+  ];
+  check = validateMarkersAndRecipients(incompleteMarkers, signatories.map(s => s.user), userMap);
+  console.assert(check.valid === false && check.error?.includes('Each recipient must have at least one signature marker'), 'Case 20 failed');
+  console.log('✅ PASS: Case 20 - Missing marker for a recipient is rejected');
+
+  // Test Case 21: validateMarkersAndRecipients - unmapped marker fails validation
+  const unmappedMarkers = [
+    { id: 'm-unmapped', assignedToId: 'unassigned-user' }
+  ];
+  // Since 'unassigned-user' is not in recipients list, no recipient is satisfied by this marker. This should FAIL.
+  check = validateMarkersAndRecipients(unmappedMarkers, signatories.map(s => s.user), userMap);
+  console.assert(check.valid === false && check.error?.includes('Each recipient must have at least one signature marker'), 'Case 21 failed');
+  console.log('✅ PASS: Case 21 - Unmapped marker does not satisfy recipients and is rejected');
+
+  console.log('\n=== ALL 21 TESTS PASSED SUCCESSFULLY ===');
 }
 
 runTests();
