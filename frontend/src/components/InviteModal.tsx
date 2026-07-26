@@ -3,51 +3,24 @@ import {
   X, Users, Lock, Mail, AlertCircle, CheckCircle, RefreshCw,
   ArrowDown, ArrowUp, Trash2, Plus
 } from 'lucide-react'
-import type { User } from '../types'
-import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
+import type { User, Marker } from '../types'
+import { normalizeUser } from '../context/AppContext'
 
 interface InviteModalProps {
   documentName: string
   initialSignatories: User[]
+  markers: Marker[]
   onConfirm: (signatories: User[]) => void
   onClose: () => void
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-function makeSigner(email: string, name: string, accessRole: User['accessRole']): User {
-  const cleanEmail = email.trim().toLowerCase()
-  const cleanName = name.trim() || cleanEmail.split('@')[0]
-  const initials = cleanName
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase())
-    .join('') || 'S'
-
-  return {
-    id: `temp-${cleanEmail}`,
-    name: cleanName,
-    email: cleanEmail,
-    initials,
-    nik: '',
-    verified: true,
-    avatarColor: accessRole === 'manager' ? '#ec4899' : '#8b5cf6',
-    role: accessRole === 'manager' ? 'Manager' : 'Supervisor',
-    accessRole,
-    external: true,
-  }
-}
-
-export default function InviteModal({ documentName, initialSignatories, onConfirm, onClose }: InviteModalProps) {
+export default function InviteModal({ documentName, initialSignatories, markers, onConfirm, onClose }: InviteModalProps) {
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
-  const [signatories, setSignatories] = useState<User[]>(
-    initialSignatories.length > 0 ? initialSignatories : [SUPERVISOR_USER, MANAGER_USER]
-  )
-  const [email, setEmail] = useState('')
-  const [name, setName] = useState('')
-  const [accessRole, setAccessRole] = useState<User['accessRole']>('supervisor')
+  const [signatories, setSignatories] = useState<User[]>(initialSignatories)
+  const [liveReviewers, setLiveReviewers] = useState<User[]>([])
+  const [selectedReviewerId, setSelectedReviewerId] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
 
   // Lock background page scroll when modal is mounted, and restore on unmount
@@ -59,9 +32,41 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
     }
   }, [])
 
+  // Fetch live reviewers
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+        const res = await fetch(`${apiBase}/users`)
+        if (!res.ok) throw new Error('Failed to fetch users')
+        const data = await res.json()
+        const filtered = data
+          .map(normalizeUser)
+          .filter((u: User) => u.accessRole === 'supervisor' || u.accessRole === 'manager')
+        setLiveReviewers(filtered)
+        if (filtered.length > 0) {
+          setSelectedReviewerId(filtered[0].id)
+        }
+      } catch (err) {
+        console.error('InviteModal: Failed to fetch live users:', err)
+      }
+    }
+    fetchUsers()
+  }, [])
+
   const hasSupervisor = signatories.some(s => s.accessRole === 'supervisor')
   const hasManager = signatories.some(s => s.accessRole === 'manager')
-  const canSend = signatories.length > 0 && hasSupervisor && hasManager
+  
+  const hasAtLeastOneMarker = markers.length > 0
+  const recipientEmails = signatories.map(s => s.email.toLowerCase())
+  const hasMarkersForAll = signatories.every(sig => {
+    return markers.some(m => {
+      const mEmail = m.assignedTo?.email?.toLowerCase()
+      return mEmail === sig.email.toLowerCase()
+    })
+  })
+
+  const canSend = signatories.length > 0 && hasSupervisor && hasManager && hasAtLeastOneMarker && hasMarkersForAll
   const firstRecipient = signatories[0]
 
   const emailPreview = useMemo(() => {
@@ -69,26 +74,17 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
     return `${firstRecipient.name} will receive: "Your signature is required on '${documentName}'. Click to sign."`
   }, [documentName, firstRecipient])
 
-  const resetForm = () => {
-    setEmail('')
-    setName('')
-    setAccessRole('supervisor')
-    setError(null)
-  }
+  const addSelectedReviewer = () => {
+    const reviewer = liveReviewers.find(r => r.id === selectedReviewerId)
+    if (!reviewer) return
 
-  const addSigner = () => {
-    const cleanEmail = email.trim().toLowerCase()
-    if (!EMAIL_PATTERN.test(cleanEmail)) {
-      setError('Enter a valid signatory email address.')
-      return
-    }
-    if (signatories.some(s => s.email.toLowerCase() === cleanEmail)) {
+    if (signatories.some(s => s.email.toLowerCase() === reviewer.email.toLowerCase())) {
       setError('That signatory is already in the list.')
       return
     }
 
-    setSignatories(prev => [...prev, makeSigner(cleanEmail, name, accessRole)])
-    resetForm()
+    setSignatories(prev => [...prev, reviewer])
+    setError(null)
   }
 
   const removeSigner = (emailToRemove: string) => {
@@ -121,8 +117,20 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
   }
 
   const handleSend = async () => {
-    if (!canSend) {
+    if (!hasAtLeastOneMarker) {
+      setError('Please place at least one signature marker on the document before sending invitations.')
+      return
+    }
+    if (!hasMarkersForAll) {
+      setError('Each recipient must have at least one signature marker placed and assigned to them.')
+      return
+    }
+    if (!hasSupervisor || !hasManager) {
       setError('Add at least one Supervisor and one Manager before sending.')
+      return
+    }
+    if (!canSend) {
+      setError('Please verify the signatories and markers placement before sending.')
       return
     }
 
@@ -158,39 +166,49 @@ export default function InviteModal({ documentName, initialSignatories, onConfir
         {/* 2. SCROLLABLE BODY */}
         <div className="flex-1 overflow-y-auto pr-1 mb-5 space-y-4 border-y border-outline-variant/30 py-4 text-left">
           
-          {/* Signer inputs form fields */}
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3">
-            <input
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') addSigner()
-              }}
-              className="input-field"
-              placeholder="signer@company.com"
-              type="email"
-            />
-            <select
-              value={accessRole}
-              onChange={e => setAccessRole(e.target.value as User['accessRole'])}
-              className="input-field"
-            >
-              <option value="supervisor">Supervisor</option>
-              <option value="manager">Manager</option>
-            </select>
+          {/* Select Reviewer from live dropdown */}
+          <div>
+            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-2">Select Signer</p>
+            {liveReviewers.length === 0 ? (
+              <div className="text-xs text-red-700 bg-red-50 p-3.5 rounded-xl border border-red-200 flex items-start gap-2.5">
+                <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">No Reviewers Available</p>
+                  <p className="mt-1 leading-relaxed">No Supervisor or Manager accounts exist in the database. Please register reviewer accounts first.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <select
+                  value={selectedReviewerId}
+                  onChange={e => setSelectedReviewerId(e.target.value)}
+                  className="input-field flex-1 text-xs"
+                >
+                  {liveReviewers.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} ({r.email}) - {r.accessRole === 'manager' ? 'Manager' : 'Supervisor'}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={addSelectedReviewer} className="btn-secondary justify-center text-xs font-bold whitespace-nowrap">
+                  <Plus size={15} /> Add Signer
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className="input-field"
-              placeholder="Full name"
-            />
-            <button onClick={addSigner} className="btn-secondary justify-center">
-              <Plus size={15} /> Add
-            </button>
-          </div>
+          {markers.length === 0 && (
+            <div id="missing-markers-error" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              <AlertCircle size={13} className="flex-shrink-0" />
+              Please place at least one signature marker on the document before sending invitations.
+            </div>
+          )}
+          {markers.length > 0 && !hasMarkersForAll && (
+            <div id="recipient-markers-error" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              <AlertCircle size={13} className="flex-shrink-0" />
+              Each recipient must have at least one signature marker placed and assigned to them.
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">

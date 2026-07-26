@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History, AlertTriangle, Loader2, Eye, EyeOff } from 'lucide-react'
+import { PenSquare, Shield, CheckCircle, ArrowRight, ShieldCheck, Bell, FileText, Lock, Cloud, Sparkles, UserPlus, History, AlertTriangle, Loader2, Eye, EyeOff, X } from 'lucide-react'
 
 
 
@@ -14,10 +14,12 @@ export default function Landing() {
   const [fullName, setFullName] = useState('')
   const [emailAddress, setEmailAddress] = useState('')
   const [password, setPassword] = useState('')
+  const [nik, setNik] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
   // Form feedback state
   const [formError, setFormError] = useState<string | null>(null)
+  const [formSuccess, setFormSuccess] = useState<string | null>(null)
   const [formLoading, setFormLoading] = useState(false)
 
   const navigate = useNavigate()
@@ -43,12 +45,8 @@ export default function Landing() {
     window.location.href = authUrl;
   };
 
-  // Reusable post-auth routing: handles nikPending and mfaPending responses
+  // Reusable post-auth routing: handles mfaPending responses
   const handleAuthResponse = (data: any) => {
-    if (data.nikPending) {
-      navigate('/verify-nik', { replace: true, state: { tempToken: data.tempToken } });
-      return;
-    }
     if (data.mfaPending) {
       navigate('/verify-otp', { replace: true, state: { tempToken: data.tempToken } });
       return;
@@ -60,8 +58,9 @@ export default function Landing() {
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    setFormSuccess(null);
 
-    if (!fullName.trim() || !emailAddress.trim() || !password) {
+    if (!fullName.trim() || !emailAddress.trim() || !password || !nik.trim()) {
       setFormError('Please fill out all fields.');
       return;
     }
@@ -72,7 +71,12 @@ export default function Landing() {
       const res = await fetch(`${apiBase}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName: fullName.trim(), email: emailAddress.trim(), password }),
+        body: JSON.stringify({
+          fullName: fullName.trim(),
+          email: emailAddress.trim(),
+          password,
+          nik: nik.trim()
+        }),
       });
 
       const data = await res.json();
@@ -86,8 +90,12 @@ export default function Landing() {
         return;
       }
 
-      setShowAuthDialog(false);
-      handleAuthResponse(data);
+      // Successful registration: switch modal to login mode and show success banner
+      setAuthMode('login');
+      setFormSuccess(data.message || 'Account created! Please log in.');
+      setFormError(null);
+      setPassword('');
+      setNik('');
     } catch (err: any) {
       setFormError('Network error. Please check your connection and try again.');
     } finally {
@@ -98,6 +106,7 @@ export default function Landing() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    setFormSuccess(null);
 
     if (!emailAddress.trim() || !password) {
       setFormError('Please enter your email and password.');
@@ -136,9 +145,11 @@ export default function Landing() {
   const openDialog = (mode: 'signup' | 'login' = 'signup') => {
     setAuthMode(mode);
     setFormError(null);
+    setFormSuccess(null);
     setFullName('');
     setEmailAddress('');
     setPassword('');
+    setNik('');
     setShowPassword(false);
     setShowAuthDialog(true);
   };
@@ -205,7 +216,7 @@ export default function Landing() {
                   className="px-8 py-4 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
                 >
 
-                  Log In to Get Started
+                  Get Started
                   <ArrowRight size={16} />
                 </button>
               </div>
@@ -458,211 +469,247 @@ export default function Landing() {
             </div>
           </div>
         </div>
-      </footer>      {/* Auth Dialog — Sign Up / Log In */}
+      </footer>
+
+      {/* Auth Dialog — Sign Up / Log In */}
       {showAuthDialog && (
         <div className="modal-overlay">
-          <div className="modal-content max-w-md bg-white border border-outline-variant p-6 sm:p-8">
+          <div className="modal-content max-w-md bg-white border border-outline-variant p-0 sm:p-0 max-h-[90vh] flex flex-col">
 
-            <div className="text-center mb-5">
-              <h2 className="font-display text-xl font-bold text-on-surface mb-1">
-                {authMode === 'signup' ? 'Create your account' : 'Welcome back'}
-              </h2>
-              <p className="text-xs text-on-surface-variant">
-                {authMode === 'signup' ? 'Start your 14-day free trial today.' : 'Sign in to access your documents.'}
-              </p>
-            </div>
-
-            {/* Google OAuth */}
-            <div className="mb-5">
-              <button
+            {/* Header — fixed */}
+            <div className="flex items-center justify-between p-6 sm:p-8 pb-0 sm:pb-0 mb-4 flex-shrink-0">
+              <div className="text-left">
+                <h2 className="font-display text-xl font-bold text-on-surface mb-1">
+                  {authMode === 'signup' ? 'Create your account' : 'Welcome back'}
+                </h2>
+                <p className="text-xs text-on-surface-variant">
+                  {authMode === 'signup' ? 'Start your 14-day free trial today.' : 'Sign in to access your documents.'}
+                </p>
+              </div>
+              <button 
                 type="button"
-                onClick={handleGoogleLogin}
-                className="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-sm font-bold text-on-surface"
+                onClick={() => setShowAuthDialog(false)} 
+                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container self-start"
               >
-                <svg width="16" height="16" viewBox="0 0 18 18">
-                  <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-                  <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
-                  <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
-                  <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
-                </svg>
-                Sign in with Google
+                <X size={18} />
               </button>
             </div>
 
-            <div className="flex items-center gap-3 mb-5">
-              <div className="flex-1 h-px bg-outline-variant/60" />
-              <span className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider font-semibold">
-                {authMode === 'signup' ? 'Or sign up with email' : 'Or log in with email'}
-              </span>
-              <div className="flex-1 h-px bg-outline-variant/60" />
+            {/* Scrollable content container */}
+            <div className="flex-1 overflow-y-auto px-6 sm:px-8 pb-6 sm:pb-8">
+              {/* Google OAuth */}
+              <div className="mb-5">
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  className="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-sm font-bold text-on-surface"
+                >
+                  <svg width="16" height="16" viewBox="0 0 18 18">
+                    <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+                    <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
+                    <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+                    <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+                  </svg>
+                  Sign in with Google
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 h-px bg-outline-variant/60" />
+                <span className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider font-semibold">
+                  {authMode === 'signup' ? 'Or sign up with email' : 'Or log in with email'}
+                </span>
+                <div className="flex-1 h-px bg-outline-variant/60" />
+              </div>
+
+              {/* SIGN UP FORM */}
+              {authMode === 'signup' && (
+                <form onSubmit={handleSignUp} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">Full Name</label>
+                    <input
+                      id="signup-fullname"
+                      type="text"
+                      placeholder="John Doe"
+                      value={fullName}
+                      onChange={e => { setFullName(e.target.value); setFormError(null); }}
+                      className="input-field"
+                      disabled={formLoading}
+                      autoComplete="name"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
+                    <input
+                      id="signup-email"
+                      type="email"
+                      placeholder="name@company.com"
+                      value={emailAddress}
+                      onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
+                      className="input-field"
+                      disabled={formLoading}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
+                    <div className="relative">
+                      <input
+                        id="signup-password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Min. 8 characters"
+                        value={password}
+                        onChange={e => { setPassword(e.target.value); setFormError(null); }}
+                        className="input-field pr-10"
+                        disabled={formLoading}
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(p => !p)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">NIK/NIP</label>
+                    <input
+                      id="signup-nik"
+                      type="text"
+                      placeholder="e.g. 16-digit NIK"
+                      value={nik}
+                      onChange={e => { setNik(e.target.value); setFormError(null); }}
+                      className="input-field"
+                      disabled={formLoading}
+                    />
+                  </div>
+
+                  {/* Inline error */}
+                  {formError && (
+                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                      <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                      <span className="font-medium text-left">{formError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthDialog(false)}
+                      className="btn-secondary py-2.5 flex-1 justify-center"
+                      disabled={formLoading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn-primary py-2.5 flex-1 justify-center"
+                      disabled={formLoading}
+                    >
+                      {formLoading ? (
+                        <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating...</span>
+                      ) : 'Create Account'}
+                    </button>
+                  </div>
+
+                  <p className="text-center text-xs text-on-surface-variant pt-1">
+                    Already have an account?{' '}
+                    <button type="button" onClick={() => { setAuthMode('login'); setFormError(null); setFormSuccess(null); }} className="text-primary font-bold hover:underline">
+                      Log in instead
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {/* LOG IN FORM */}
+              {authMode === 'login' && (
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
+                    <input
+                      id="login-email"
+                      type="email"
+                      placeholder="name@company.com"
+                      value={emailAddress}
+                      onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
+                      className="input-field"
+                      disabled={formLoading}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
+                    <div className="relative">
+                      <input
+                        id="login-password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={e => { setPassword(e.target.value); setFormError(null); }}
+                        className="input-field pr-10"
+                        disabled={formLoading}
+                        autoComplete="current-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(p => !p)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Inline success */}
+                  {formSuccess && (
+                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs">
+                      <CheckCircle size={14} className="flex-shrink-0 mt-0.5" />
+                      <span className="font-medium text-left">{formSuccess}</span>
+                    </div>
+                  )}
+
+                  {/* Inline error */}
+                  {formError && (
+                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                      <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                      <span className="font-medium text-left">{formError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthDialog(false)}
+                      className="btn-secondary py-2.5 flex-1 justify-center"
+                      disabled={formLoading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn-primary py-2.5 flex-1 justify-center"
+                      disabled={formLoading}
+                    >
+                      {formLoading ? (
+                        <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Signing In...</span>
+                      ) : 'Sign In'}
+                    </button>
+                  </div>
+
+                  <p className="text-center text-xs text-on-surface-variant pt-1">
+                    Don't have an account?{' '}
+                    <button type="button" onClick={() => { setAuthMode('signup'); setFormError(null); setFormSuccess(null); }} className="text-primary font-bold hover:underline">
+                      Sign up instead
+                    </button>
+                  </p>
+                </form>
+              )}
             </div>
-
-            {/* SIGN UP FORM */}
-            {authMode === 'signup' && (
-              <form onSubmit={handleSignUp} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Full Name</label>
-                  <input
-                    id="signup-fullname"
-                    type="text"
-                    placeholder="John Doe"
-                    value={fullName}
-                    onChange={e => { setFullName(e.target.value); setFormError(null); }}
-                    className="input-field"
-                    disabled={formLoading}
-                    autoComplete="name"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
-                  <input
-                    id="signup-email"
-                    type="email"
-                    placeholder="name@company.com"
-                    value={emailAddress}
-                    onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
-                    className="input-field"
-                    disabled={formLoading}
-                    autoComplete="email"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
-                  <div className="relative">
-                    <input
-                      id="signup-password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="Min. 8 characters"
-                      value={password}
-                      onChange={e => { setPassword(e.target.value); setFormError(null); }}
-                      className="input-field pr-10"
-                      disabled={formLoading}
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(p => !p)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Inline error */}
-                {formError && (
-                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
-                    <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                    <span className="font-medium text-left">{formError}</span>
-                  </div>
-                )}
-
-                <div className="flex gap-2.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowAuthDialog(false)}
-                    className="btn-secondary py-2.5 flex-1 justify-center"
-                    disabled={formLoading}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn-primary py-2.5 flex-1 justify-center"
-                    disabled={formLoading}
-                  >
-                    {formLoading ? (
-                      <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating...</span>
-                    ) : 'Create Account'}
-                  </button>
-                </div>
-
-                <p className="text-center text-xs text-on-surface-variant pt-1">
-                  Already have an account?{' '}
-                  <button type="button" onClick={() => { setAuthMode('login'); setFormError(null); }} className="text-primary font-bold hover:underline">
-                    Log in instead
-                  </button>
-                </p>
-              </form>
-            )}
-
-            {/* LOG IN FORM */}
-            {authMode === 'login' && (
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Email Address</label>
-                  <input
-                    id="login-email"
-                    type="email"
-                    placeholder="name@company.com"
-                    value={emailAddress}
-                    onChange={e => { setEmailAddress(e.target.value); setFormError(null); }}
-                    className="input-field"
-                    disabled={formLoading}
-                    autoComplete="email"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1 text-left">Password</label>
-                  <div className="relative">
-                    <input
-                      id="login-password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={e => { setPassword(e.target.value); setFormError(null); }}
-                      className="input-field pr-10"
-                      disabled={formLoading}
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(p => !p)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Inline error */}
-                {formError && (
-                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
-                    <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                    <span className="font-medium text-left">{formError}</span>
-                  </div>
-                )}
-
-                <div className="flex gap-2.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowAuthDialog(false)}
-                    className="btn-secondary py-2.5 flex-1 justify-center"
-                    disabled={formLoading}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn-primary py-2.5 flex-1 justify-center"
-                    disabled={formLoading}
-                  >
-                    {formLoading ? (
-                      <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Signing In...</span>
-                    ) : 'Sign In'}
-                  </button>
-                </div>
-
-                <p className="text-center text-xs text-on-surface-variant pt-1">
-                  Don't have an account?{' '}
-                  <button type="button" onClick={() => { setAuthMode('signup'); setFormError(null); }} className="text-primary font-bold hover:underline">
-                    Sign up instead
-                  </button>
-                </p>
-              </form>
-            )}
 
           </div>
         </div>

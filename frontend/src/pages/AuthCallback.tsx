@@ -59,11 +59,6 @@ export default function AuthCallback() {
         }
 
         const data = await res.json();
-        
-        if (data.nikPending) {
-          navigate('/verify-nik', { replace: true, state: { tempToken: data.tempToken } });
-          return;
-        }
 
         if (data.mfaPending) {
           navigate('/verify-otp', { replace: true, state: { tempToken: data.tempToken } });
