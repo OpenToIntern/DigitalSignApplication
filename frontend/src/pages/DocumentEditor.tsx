@@ -2,15 +2,14 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   FileText, ChevronLeft, ChevronRight, Users, Plus, Send,
-  PenSquare, Lock, Calendar, Eye, ZoomIn, ZoomOut, RotateCcw, RotateCw, XCircle
+  PenSquare, Lock, Calendar, Eye, ZoomIn, ZoomOut, RotateCcw, RotateCw, XCircle, AlertCircle
 } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import SignatureModal from '../components/SignatureModal'
 import InviteModal from '../components/InviteModal'
 import PDFViewer from '../components/PDFViewer'
-import { useApp } from '../context/AppContext'
+import { useApp, normalizeUser } from '../context/AppContext'
 import type { Document, Marker, User, SignatureData } from '../types'
-import { SUPERVISOR_USER, MANAGER_USER } from '../constants/mockData'
 
 const BASE_PDF_SCALE = 1.2
 const MIN_MARKER_WIDTH = 80
@@ -18,7 +17,7 @@ const MIN_MARKER_HEIGHT = 30
 
 export default function DocumentEditor() {
   const { id } = useParams<{ id: string }>()
-  const { documents, updateDocument, currentUser } = useApp()
+  const { documents, updateDocument, currentUser, token } = useApp()
   const navigate = useNavigate()
 
   const doc = documents.find(d => d.id === id)
@@ -32,8 +31,36 @@ export default function DocumentEditor() {
   const [pendingSignature, setPendingSignature] = useState<SignatureData | null>(null)
   
   // Assignee selector state
-  const [assignedUser, setAssignedUser] = useState<User>(SUPERVISOR_USER)
-  const [signatories, setSignatories] = useState<User[]>([SUPERVISOR_USER, MANAGER_USER])
+  const [assignedUser, setAssignedUser] = useState<User | null>(null)
+  const [signatories, setSignatories] = useState<User[]>([])
+  const [allReviewers, setAllReviewers] = useState<User[]>([])
+  const [loadingReviewers, setLoadingReviewers] = useState(true)
+
+  // Fetch live supervisors/managers on mount
+  useEffect(() => {
+    const fetchReviewers = async () => {
+      try {
+        setLoadingReviewers(true)
+        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+        const headers: Record<string, string> = {}
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`
+        }
+        const res = await fetch(`${apiBase}/users`, { headers })
+        if (!res.ok) throw new Error('Failed to fetch users')
+        const data = await res.json()
+        const filtered = data
+          .map(normalizeUser)
+          .filter((u: User) => u.accessRole === 'supervisor' || u.accessRole === 'manager')
+        setAllReviewers(filtered)
+      } catch (err) {
+        console.error('Failed to load reviewers:', err)
+      } finally {
+        setLoadingReviewers(false)
+      }
+    }
+    fetchReviewers()
+  }, [token])
 
   // Dragging and interactive states
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -267,15 +294,20 @@ export default function DocumentEditor() {
       const nextMarkers = doc.markers || []
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
-      const nextSignatories = doc.recipients?.length ? doc.recipients : [SUPERVISOR_USER, MANAGER_USER]
+      
+      const nextSignatories = doc.recipients?.length ? doc.recipients : []
       setSignatories(nextSignatories)
-      setAssignedUser(current => (
-        nextSignatories.some(user => user.id === current.id || user.email === current.email)
-          ? current
-          : nextSignatories[0]
-      ))
+      
+      if (allReviewers.length > 0) {
+        setAssignedUser(current => {
+          if (current && allReviewers.some(user => user.id === current.id || user.email === current.email)) {
+            return current
+          }
+          return allReviewers[0]
+        })
+      }
     }
-  }, [doc])
+  }, [doc, allReviewers])
 
   if (!doc) {
     return (
@@ -307,7 +339,7 @@ export default function DocumentEditor() {
   }
 
   const handlePlaceMarker = (type: Marker['type']) => {
-    if (!canPlaceMarkers) return
+    if (!canPlaceMarkers || !assignedUser) return
     const newMarker: Marker = {
       id: `m-${Date.now()}`,
       x: 100 + (markers.length * 15) % 150,
@@ -316,7 +348,7 @@ export default function DocumentEditor() {
       height: 45,
       page: activePage,
       type,
-      assignedTo: assignedUser || signatories[0] || SUPERVISOR_USER,
+      assignedTo: assignedUser,
       signed: false,
     }
     const updated = [...markers, newMarker]
@@ -858,8 +890,9 @@ export default function DocumentEditor() {
                 ].map(field => (
                   <button
                     key={field.type}
+                    disabled={allReviewers.length === 0}
                     onClick={() => handlePlaceMarker(field.type)}
-                    className="w-full flex items-center gap-3 p-3.5 text-left bg-surface-container-low border border-outline-variant/50 hover:border-primary/40 rounded-xl transition-all"
+                    className="w-full flex items-center gap-3 p-3.5 text-left bg-surface-container-low border border-outline-variant/50 hover:border-primary/40 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-base font-bold">
                       {field.icon}
@@ -877,20 +910,30 @@ export default function DocumentEditor() {
             {canPlaceMarkers && (
               <div>
                 <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Assigned To</h3>
-                <select
-                  value={assignedUser.id}
-                  onChange={e => {
-                    const nextUser = signatories.find(user => user.id === e.target.value)
-                    if (nextUser) setAssignedUser(nextUser)
-                  }}
-                  className="w-full input-field py-2 text-xs"
-                >
-                  {signatories.map((user, index) => (
-                    <option key={`${user.id}-${user.email}`} value={user.id}>
-                      {index + 1}. {user.name} ({user.accessRole === 'manager' ? 'Manager' : 'Supervisor'})
-                    </option>
-                  ))}
-                </select>
+                {allReviewers.length === 0 ? (
+                  <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+                    <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">No Reviewers Available</p>
+                      <p className="mt-1 leading-relaxed">No Supervisor or Manager accounts exist in the database. Please create reviewer accounts first.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <select
+                    value={assignedUser?.id || ''}
+                    onChange={e => {
+                      const nextUser = allReviewers.find(user => user.id === e.target.value)
+                      if (nextUser) setAssignedUser(nextUser)
+                    }}
+                    className="w-full input-field py-2 text-xs"
+                  >
+                    {allReviewers.map((user, index) => (
+                      <option key={`${user.id}-${user.email}`} value={user.id}>
+                        {index + 1}. {user.name} ({user.accessRole === 'manager' ? 'Manager' : 'Supervisor'})
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
 
@@ -931,6 +974,7 @@ export default function DocumentEditor() {
         <InviteModal
           documentName={doc.name}
           initialSignatories={signatories}
+          markers={markers}
           onConfirm={handleInviteConfirm}
           onClose={() => setShowInvite(false)}
         />

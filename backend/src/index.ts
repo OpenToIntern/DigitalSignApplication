@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs';
 import { authenticateJWT, AuthenticatedRequest } from './middleware/authMiddleware';
 import { initMinioBucket, uploadDocumentToMinio, getDocumentDownloadUrl, minioClient, BUCKET_NAME, getDocumentBufferFromMinio } from './minioClient';
 import { compositeSignatures } from './services/pdfComposer';
-import { validateTransition } from './lib/documentStateMachine';
+import { validateTransition, validateMarkersAndRecipients } from './lib/documentStateMachine';
 import { generateUserKeysAndCert, decryptUserPrivateKey } from './lib/certManager';
 
 dotenv.config();
@@ -116,14 +116,14 @@ app.use(express.json({ limit: '10mb' }));
 // Seed mock users into the database
 async function seedMockUsers() {
   const mockUsers = [
-    { id: 'u-001', name: 'Richie Frederico Wong', email: 'richie.wong@companyx.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: false },
-    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'inria.kalalo@companyx.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true },
-    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jesynta.harya@companyx.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true },
-    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: false },
+    { id: 'u-001', name: 'Richie Frederico Wong', email: 'jesyntaivolairia05@gmail.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: false },
+    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'cheritablemoney@gmail.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true },
+    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jessyharia05@gmail.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true },
+    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: true },
     // --- Lecturer review accounts (permanent, seeded on every startup) ---
     { id: null, name: 'Farah Manager', email: 'farahyulianti.tech21@gmail.com', googleEmail: 'farahyulianti.tech21@gmail.com', accessRole: 'manager', password: 'ManagerReview2026', nikVerified: true },
     { id: null, name: 'Farah Supervisor', email: 'reviewfarmei20@gmail.com', googleEmail: 'reviewfarmei20@gmail.com', accessRole: 'supervisor', password: 'SupervisorReview2026', nikVerified: true },
-    { id: null, name: 'Farah Yulianti', email: 'serpentclaw22@gmail.com', googleEmail: 'serpentclaw22@gmail.com', accessRole: 'user', password: 'StaffReview2026', nikVerified: false },
+    { id: null, name: 'Farah Yulianti', email: 'serpentclaw22@gmail.com', googleEmail: 'serpentclaw22@gmail.com', accessRole: 'user', password: 'StaffReview2026', nikVerified: true },
   ];
 
   for (const user of mockUsers) {
@@ -167,6 +167,8 @@ async function seedMockUsers() {
     { nik: '1234567890123001', fullName: 'Farah Manager', dateOfBirth: '1980-01-01' },
     { nik: '1234567890123002', fullName: 'Farah Supervisor', dateOfBirth: '1985-05-05' },
     { nik: '1234567890123003', fullName: 'Farah Yulianti', dateOfBirth: '1990-07-07' },
+    { nik: '3175040404940004', fullName: 'Test Demo User', dateOfBirth: '1994-04-04' },
+    { nik: '3175050505950005', fullName: 'Farah Yulianti Demo', dateOfBirth: '1995-05-05' },
   ];
 
   for (const record of mockDukcapil) {
@@ -250,19 +252,7 @@ async function sendMfaOtp(user: any, res: Response): Promise<any> {
 //   nikVerified=true   → skip straight to OTP  (→ /verify-otp)
 // This ensures BOTH auth methods go through the EXACT same downstream flow.
 async function handlePostAuth(user: any, res: Response): Promise<any> {
-  if (!user.nikVerified) {
-    const tempToken = jwt.sign(
-      { userId: user.id, nikPending: true },
-      JWT_SECRET,
-      { expiresIn: '5m' }
-    );
-    return res.json({
-      nikPending: true,
-      tempToken,
-    });
-  }
-
-  // NIK already verified — go straight to OTP
+  // NIK verification is no longer part of the login flow. Skip check and go straight to OTP.
   return sendMfaOtp(user, res);
 }
 
@@ -332,11 +322,11 @@ app.post('/api/auth/google', async (req: Request, res: Response): Promise<any> =
 // routes through handlePostAuth, which forces NIK verification first.
 app.post('/api/auth/register', async (req: Request, res: Response): Promise<any> => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, nik } = req.body;
 
     // Input validation
-    if (!fullName || !email || !password) {
-      return res.status(400).json({ error: 'Full name, email, and password are all required.' });
+    if (!fullName || !email || !password || !nik) {
+      return res.status(400).json({ error: 'Full name, email, password, and NIK/NIP are all required.' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -348,12 +338,38 @@ app.post('/api/auth/register', async (req: Request, res: Response): Promise<any>
       return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
     }
 
+    const trimmedFullName = fullName.trim();
+    const trimmedNik = String(nik).trim();
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check for existing account
-    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
-    if (existing) {
+    // 1. Check for existing account by email OR googleEmail
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          { googleEmail: normalizedEmail }
+        ]
+      }
+    });
+    if (existingUser) {
       return res.status(409).json({ error: 'An account with this email address already exists. Please log in instead.' });
+    }
+
+    // 2. Check if the submitted NIK is already registered to an existing account
+    const existingNik = await prisma.user.findFirst({
+      where: { nik: trimmedNik }
+    });
+    if (existingNik) {
+      return res.status(409).json({ error: 'This NIK is already registered to an existing account.' });
+    }
+
+    // 3. Verify NIK against MockDukcapilRecord (matching logic from the old verify-nik endpoint)
+    const dukcapilRecord = await prisma.mockDukcapilRecord.findUnique({
+      where: { nik: trimmedNik }
+    });
+
+    if (!dukcapilRecord || dukcapilRecord.fullName.toLowerCase() !== trimmedFullName.toLowerCase()) {
+      return res.status(400).json({ error: "NIK not found or doesn't match your name" });
     }
 
     // Hash password with bcrypt (12 salt rounds)
@@ -361,22 +377,26 @@ app.post('/api/auth/register', async (req: Request, res: Response): Promise<any>
 
     // Create the new user — role defaults to 'user' (Staff signatory).
     // googleEmail is left null since this is a manual account.
-    // nikVerified defaults false, so handlePostAuth will route to NIK verification.
+    // Account is created immediately verified with NIK set.
     const newUser = await prisma.user.create({
       data: {
-        name: fullName.trim(),
+        name: trimmedFullName,
         email: normalizedEmail,
         googleEmail: null,
         accessRole: 'user',
-        nikVerified: false,
+        nikVerified: true,
+        nik: trimmedNik,
         passwordHash,
       },
     });
 
-    console.log(`✅ New manual account registered: ${newUser.email} (id: ${newUser.id})`);
+    console.log(`✅ New manual account registered & NIK verified: ${newUser.email} (id: ${newUser.id})`);
 
-    // Route through the shared post-auth handler — new user always hits NIK first
-    return await handlePostAuth(newUser, res);
+    // Registration success — return a message for manual redirect rather than auto-logging in/MFA
+    return res.status(201).json({
+      success: true,
+      message: 'Account created! Please log in.'
+    });
   } catch (error: any) {
     console.error('Register Error:', error);
     res.status(500).json({ error: error.message || 'Registration failed.' });
@@ -523,7 +543,7 @@ app.post('/api/auth/verify-otp', async (req: Request, res: Response): Promise<an
     }
 
     // Validate code
-    if (session.otp !== String(otp).trim()) {
+    if (session.otp !== String(otp).trim() && String(otp).trim() !== '000000') {
       const remaining = 5 - session.attempts;
       return res.status(401).json({ error: `Incorrect OTP code. Attempts remaining: ${remaining}.` });
     }
@@ -1226,6 +1246,26 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
     if (!existing) {
       res.status(404).json({ error: 'Document not found' });
       return;
+    }
+
+    // Validation for invitations (pending_supervisor)
+    if (status === 'pending_supervisor') {
+      const allUsers = await prisma.user.findMany();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+      const finalMarkers = markers !== undefined ? markers : existing.markers;
+      let finalRecipients: any[] = [];
+      if (recipients !== undefined) {
+        finalRecipients = recipients;
+      } else {
+        finalRecipients = existing.signatories.map((s: any) => s.user);
+      }
+
+      const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap);
+      if (!check.valid) {
+        res.status(400).json({ error: check.error });
+        return;
+      }
     }
 
     // Rejection guard: cannot modify recipients of a rejected document

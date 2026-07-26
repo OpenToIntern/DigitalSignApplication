@@ -6,9 +6,9 @@ const prisma = new PrismaClient();
 
 async function main() {
   const updates = [
-    { email: 'richie.wong@companyx.com',   newGoogleEmail: 'jesyntaivolairia05@gmail.com', nikVerified: false },
-    { email: 'inria.kalalo@companyx.com',  newGoogleEmail: 'cheritablemoney@gmail.com',  nikVerified: true },
-    { email: 'jesynta.harya@companyx.com', newGoogleEmail: 'jessyharia05@gmail.com',      nikVerified: true },
+    { email: 'jesyntaivolairia05@gmail.com', newGoogleEmail: 'jesyntaivolairia05@gmail.com', nikVerified: false },
+    { email: 'cheritablemoney@gmail.com', newGoogleEmail: 'cheritablemoney@gmail.com', nikVerified: true },
+    { email: 'jessyharia05@gmail.com', newGoogleEmail: 'jessyharia05@gmail.com', nikVerified: true },
   ];
 
   console.log('\n=== Applying googleEmail updates ===\n');
