@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: signpassword
       POSTGRES_DB: signdb
     ports:
-      - "5435:5432"
+      - "5437:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
