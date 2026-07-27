@@ -40,6 +40,9 @@ interface AppContextValue extends AppState {
   addDocument: (doc: Document) => void;
   updateDocument: (id: string, updates: Partial<Document>) => Promise<Document | undefined>;
   logout: () => void;
+  // Exposes the most recent failed updateDocument error so callers can surface it
+  lastUpdateError: string | null;
+  clearLastUpdateError: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -109,6 +112,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
+  const [lastUpdateError, setLastUpdateError] = useState<string | null>(null)
+  const clearLastUpdateError = () => setLastUpdateError(null)
 
   // Fetch documents from backend API
   const refreshDocuments = async () => {
@@ -219,18 +224,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(payload)
       })
 
-      if (!res.ok) throw new Error('Failed to update document on backend')
+      if (!res.ok) {
+        // Extract real backend error message so callers can surface it
+        let backendMsg = `Server error (${res.status})`
+        try {
+          const errJson = await res.json()
+          if (errJson?.error) backendMsg = errJson.error
+        } catch { /* ignore json parse failure */ }
+        setLastUpdateError(backendMsg)
+        throw new Error(backendMsg)
+      }
+
       const updatedDocRaw = await res.json()
       const updatedDoc = mapApiDocToFrontendDoc(updatedDocRaw)
 
+      setLastUpdateError(null)
       setDocuments(prev => prev.map(d => d.id === id ? updatedDoc : d))
       return updatedDoc
-    } catch (error) {
-      console.error('Error updating document on backend:', error)
-      // Fallback local update if backend fails
-      const fallbackDoc = { ...documents.find(d => d.id === id), ...updates } as Document
-      setDocuments(prev => prev.map(d => d.id === id ? fallbackDoc : d))
-      return fallbackDoc
+    } catch (error: any) {
+      console.error('Error updating document on backend:', error.message || error)
+      // Do NOT apply failed updates locally — keep last known-good server state.
+      // lastUpdateError is already set above if it was a backend HTTP error.
+      // Re-throw so calling code can show a UI error.
+      throw error
     }
   }
 
@@ -260,6 +276,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addDocument,
       updateDocument,
       logout,
+      lastUpdateError,
+      clearLastUpdateError,
     }}>
       {children}
     </AppContext.Provider>

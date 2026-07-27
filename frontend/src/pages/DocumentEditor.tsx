@@ -21,6 +21,13 @@ export default function DocumentEditor() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isReviewMode = searchParams.get('mode') === 'review'
+  // Surfaces backend error text as an inline toast above the document
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const showActionError = (msg: string) => {
+    setActionError(msg)
+    setTimeout(() => setActionError(null), 6000)
+  }
 
   const doc = documents.find(d => d.id === id)
 
@@ -415,11 +422,16 @@ export default function DocumentEditor() {
       nextStatus = 'locked'
     }
 
-    await updateDocument(doc.id, {
-      markers: updatedMarkers,
-      status: nextStatus,
-      updatedAt: now,
-    })
+    try {
+      await updateDocument(doc.id, {
+        markers: updatedMarkers,
+        status: nextStatus,
+        updatedAt: now,
+      })
+    } catch (err: any) {
+      showActionError(err.message || 'Failed to submit signature. Please try again.')
+      return
+    }
 
     if (nextStatus === 'locked') {
       navigate('/complete', { state: { documentName: doc.name, docId: doc.id } })
@@ -458,9 +470,13 @@ export default function DocumentEditor() {
 
   const handleResubmit = () => {
     if (markers.length === 0) return
+    // Compute the correct initial status from the first signatory's accessRole
+    const firstSignatory = doc.recipients?.[0]
+    const firstRole = firstSignatory?.accessRole || 'supervisor'
+    const initialStatus = `pending_${firstRole}` as Document['status']
     const now = new Date()
     updateDocument(doc.id, {
-      status: 'pending_supervisor',
+      status: initialStatus,
       markers: markers,
       auditLog: [
         ...(doc.auditLog || []),
@@ -475,7 +491,7 @@ export default function DocumentEditor() {
           metadata: { action: 'Resubmitted document after rejection' }
         }
       ]
-    })
+    }).catch((err: any) => showActionError(err.message || 'Failed to resubmit document.'))
     navigate('/documents')
   }
 
@@ -483,16 +499,20 @@ export default function DocumentEditor() {
     const now = new Date()
     setSignatories(selectedSignatories)
     const selectedEmails = new Set(selectedSignatories.map(user => user.email))
-    const workflowMarkers = markers.map(marker => (
+    const workflowMarkers = markers.map(marker =>
       selectedEmails.has(marker.assignedTo.email)
         ? marker
         : { ...marker, assignedTo: selectedSignatories[0] || marker.assignedTo }
-    ))
+    )
     markersRef.current = workflowMarkers
     setMarkers(workflowMarkers)
 
+    // Compute the correct initial status from the first signatory's accessRole
+    const firstRole = selectedSignatories[0]?.accessRole || 'supervisor'
+    const initialStatus = `pending_${firstRole}` as Document['status']
+
     updateDocument(doc.id, {
-      status: 'pending_supervisor',
+      status: initialStatus,
       recipients: selectedSignatories,
       markers: workflowMarkers,
       auditLog: [
@@ -518,7 +538,7 @@ export default function DocumentEditor() {
           metadata: { action: `Invited ${selectedSignatories.map(user => user.email).join(', ')}` }
         }
       ]
-    })
+    }).catch((err: any) => showActionError(err.message || 'Failed to send invitations.'))
     setShowInvite(false)
     navigate('/documents')
   }
@@ -694,6 +714,17 @@ export default function DocumentEditor() {
             <span className="font-bold">Document Rejected:</span>{" "}
             <span className="italic text-on-surface">"{doc.rejectionComment}"</span>
           </div>
+        </div>
+      )}
+
+      {actionError && (
+        <div id="action-error-toast" className="bg-red-50 border-b border-red-300 px-6 py-3 text-xs text-red-700 flex items-start gap-2.5">
+          <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <span className="font-bold">Action Failed: </span>
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="ml-auto text-red-500 hover:text-red-700 font-bold text-lg leading-none">×</button>
         </div>
       )}
  

@@ -215,7 +215,7 @@ export default function InviteModal({ documentName, initialSignatories, markers,
 
           <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
             <AlertCircle size={13} className="flex-shrink-0" />
-            Signing follows this order. Manager access stays locked until the required supervisor signature is recorded.
+            Signing follows the order listed below. Each signatory is notified only when their turn begins.
           </div>
 
           {/* Signing Order list */}
