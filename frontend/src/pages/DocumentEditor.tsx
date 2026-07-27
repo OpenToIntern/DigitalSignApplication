@@ -706,9 +706,6 @@ export default function DocumentEditor() {
               <PenSquare size={14} /> Switch to Sign Mode
             </button>
           )}
-          <button className="btn-ghost text-xs font-bold gap-1">
-            <Eye size={14} /> PREVIEW
-          </button>
           {canPlaceMarkers && (
             <button
               onClick={doc.status === 'rejected' ? handleResubmit : handleSendWorkflow}
