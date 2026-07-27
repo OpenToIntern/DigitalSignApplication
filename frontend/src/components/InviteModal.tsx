@@ -54,9 +54,7 @@ export default function InviteModal({ documentName, initialSignatories, markers,
     fetchUsers()
   }, [currentUser])
 
-  const hasSupervisor = signatories.some(s => s.accessRole === 'supervisor')
-  const hasManager = signatories.some(s => s.accessRole === 'manager')
-  
+
   const hasAtLeastOneMarker = markers.length > 0
   const recipientEmails = signatories.map(s => s.email.toLowerCase())
   const hasMarkersForAll = signatories.every(sig => {
@@ -126,10 +124,7 @@ export default function InviteModal({ documentName, initialSignatories, markers,
       setError('Each recipient must have at least one signature marker placed and assigned to them.')
       return
     }
-    if (!hasSupervisor || !hasManager) {
-      setError('Add at least one Supervisor and one Manager before sending.')
-      return
-    }
+
     if (!canSend) {
       setError('Please verify the signatories and markers placement before sending.')
       return
