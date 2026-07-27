@@ -336,6 +336,9 @@ export default function DocumentEditor() {
   const isSupervisor = currentUser?.accessRole === 'supervisor'
   const isManager = currentUser?.accessRole === 'manager'
 
+  const isMyTurnToSign = (isSupervisor && doc.status === 'pending_supervisor') || (isManager && doc.status === 'pending_manager')
+  const canReject = isMyTurnToSign
+
   const canPlaceMarkers = isOwner && (doc.status === 'draft' || doc.status === 'rejected') && !isReviewMode
   const canSupervisorSign = !isReviewMode && isSupervisor && doc.status === 'pending_supervisor'
   const canManagerSign = !isReviewMode && isManager && doc.status === 'pending_manager'
@@ -673,9 +676,18 @@ export default function DocumentEditor() {
           <span className="text-lg font-display font-extrabold text-primary">SignHere</span>
           <span className="text-outline-variant">|</span>
           <span className="text-xs font-semibold text-on-surface truncate max-w-[240px]">{doc.name}</span>
+          {isReviewMode ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-300">
+              <Eye size={12} /> Read-Only Preview / Review Mode
+            </span>
+          ) : isMyTurnToSign ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300">
+              <PenSquare size={12} /> Active Signature Required
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
-          {canSupervisorSign && (
+          {canReject && (
             <button
               onClick={() => {
                 setRejectionReason('')
@@ -684,6 +696,14 @@ export default function DocumentEditor() {
               className="btn-secondary py-2 px-4 text-xs font-bold text-error border-error/30 hover:bg-error/5"
             >
               <XCircle size={14} /> Reject Document
+            </button>
+          )}
+          {isReviewMode && isMyTurnToSign && (
+            <button
+              onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
+              className="btn-primary py-2 px-4 text-xs font-bold gap-1"
+            >
+              <PenSquare size={14} /> Switch to Sign Mode
             </button>
           )}
           <button className="btn-ghost text-xs font-bold gap-1">
