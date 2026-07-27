@@ -64,8 +64,13 @@ export default function InviteModal({ documentName, initialSignatories, markers,
     })
   })
 
-  // Can send if at least 1 recipient is added, at least 1 marker placed, and all recipients have markers
-  const canSend = signatories.length > 0 && hasAtLeastOneMarker && hasMarkersForAll
+  const allMarkersAssignedToRecipients = markers.every(m => {
+    const mEmail = m.assignedTo?.email?.toLowerCase()
+    return mEmail && recipientEmails.includes(mEmail)
+  })
+
+  // Can send if at least 1 recipient is added, at least 1 marker placed, all recipients have markers, and all markers belong to a recipient
+  const canSend = signatories.length > 0 && hasAtLeastOneMarker && hasMarkersForAll && allMarkersAssignedToRecipients
   const firstRecipient = signatories[0]
 
   const emailPreview = useMemo(() => {
@@ -203,6 +208,12 @@ export default function InviteModal({ documentName, initialSignatories, markers,
             <div id="recipient-markers-error" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
               <AlertCircle size={13} className="flex-shrink-0" />
               Each recipient must have at least one signature marker placed and assigned to them.
+            </div>
+          )}
+          {markers.length > 0 && !allMarkersAssignedToRecipients && (
+            <div id="orphaned-markers-error" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              <AlertCircle size={13} className="flex-shrink-0" />
+              You have placed markers assigned to reviewers who are not in the Recipients list. Add them or remove the markers.
             </div>
           )}
 

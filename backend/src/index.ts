@@ -1249,18 +1249,19 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       return;
     }
 
+    let finalRecipients: any[] = [];
+    if (recipients !== undefined) {
+      finalRecipients = recipients;
+    } else {
+      finalRecipients = existing.signatories.map((s: any) => s.user);
+    }
+
     // Validation for invitations (pending_*)
     if (status && status.startsWith('pending_')) {
       const allUsers = await prisma.user.findMany();
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const finalMarkers = markers !== undefined ? markers : existing.markers;
-      let finalRecipients: any[] = [];
-      if (recipients !== undefined) {
-        finalRecipients = recipients;
-      } else {
-        finalRecipients = existing.signatories.map((s: any) => s.user);
-      }
 
       const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap, existing.senderId, existing.sender?.email);
       if (!check.valid) {
@@ -1358,12 +1359,20 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       const allUsers = await prisma.user.findMany();
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
+      // Patch existing document with incoming recipients to validate against the intended future state
+      const patchedExisting = {
+        ...existing,
+        signatories: finalRecipients && finalRecipients.length > 0 
+          ? finalRecipients.map((u, i) => ({ user: u, userId: u.id, order: i + 1 })) 
+          : existing.signatories
+      };
+
       const validationResult = validateTransition(
         existing.status,
         status,
         callerId,
         callerRole,
-        existing,
+        patchedExisting,
         markers,
         userMap
       );
