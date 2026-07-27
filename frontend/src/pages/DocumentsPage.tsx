@@ -245,7 +245,7 @@ export default function DocumentsPage() {
                           }}
                           className="btn-ghost text-xs py-1 px-2.5"
                         >
-                          <Eye size={13} /> {(doc.status === 'draft' || doc.status === 'rejected') && (currentUser?.id === doc.senderId || currentUser?.id === doc.sender?.id) ? 'Edit' : 'View'}
+                          <Eye size={13} /> {(doc.status === 'draft' || doc.status === 'rejected') && currentUser?.id === doc.sender?.id ? 'Edit' : 'View'}
                         </button>
                       </td>
                     </tr>

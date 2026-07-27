@@ -325,7 +325,7 @@ export default function DocumentEditor() {
     )
   }
 
-  const isOwner = currentUser?.id === doc.senderId || currentUser?.id === doc.sender?.id
+  const isOwner = currentUser?.id === doc.sender?.id
   const isSupervisor = currentUser?.accessRole === 'supervisor'
   const isManager = currentUser?.accessRole === 'manager'
 

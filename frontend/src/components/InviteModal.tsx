@@ -4,7 +4,7 @@ import {
   ArrowDown, ArrowUp, Trash2, Plus
 } from 'lucide-react'
 import type { User, Marker } from '../types'
-import { normalizeUser } from '../context/AppContext'
+import { normalizeUser, useApp } from '../context/AppContext'
 
 interface InviteModalProps {
   documentName: string
@@ -14,8 +14,8 @@ interface InviteModalProps {
   onClose: () => void
 }
 
-
 export default function InviteModal({ documentName, initialSignatories, markers, onConfirm, onClose }: InviteModalProps) {
+  const { currentUser } = useApp()
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [signatories, setSignatories] = useState<User[]>(initialSignatories)

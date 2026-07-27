@@ -1232,6 +1232,7 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
     const existing = await prisma.document.findUnique({
       where: { id },
       include: {
+        sender: true,
         markers: true,
         signatories: {
           include: {
