@@ -1,7 +1,7 @@
 export const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ['pending_supervisor'],
-  pending_supervisor: ['pending_manager', 'rejected'],
-  pending_manager: ['locked'],
+  draft: ['pending_supervisor', 'pending_manager'],
+  pending_supervisor: ['pending_supervisor', 'pending_manager', 'locked', 'rejected'],
+  pending_manager: ['pending_supervisor', 'pending_manager', 'locked', 'rejected'],
   rejected: ['draft'],
   locked: [],
 };
@@ -14,7 +14,8 @@ export interface StateMachineResult {
 
 /**
  * Validates a document status transition on the backend.
- * Enforces role check, assignment check, state transitions, and signature verification.
+ * Enforces role check, assignment check, state transitions, signature verification,
+ * and dynamic recipient order chain.
  */
 export function validateTransition(
   currentStatus: string,
@@ -40,20 +41,30 @@ export function validateTransition(
     };
   }
 
+  // Helper to resolve markers (merging incoming body markers with DB markers)
+  const resolveMarkers = (dbMarkers: any[] = [], reqMarkers?: any[]) => {
+    const map = new Map<string, any>();
+    for (const m of dbMarkers) map.set(m.id, { ...m });
+    if (reqMarkers) {
+      for (const m of reqMarkers) {
+        const existing = map.get(m.id);
+        map.set(m.id, {
+          ...existing,
+          ...m,
+          assignedToId: m.assignedTo?.id || m.assignedToId || existing?.assignedToId,
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
   // 2. Validate role authorization and assignment based on transition path
   const transitionPath = `${currentStatus}->${requestedStatus}`;
 
   switch (transitionPath) {
-    case 'draft->pending_supervisor': {
-      // Must be Staff (role = 'user')
-      if (callerRole !== 'user') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Staff users can submit documents for review (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
-      // Must be document owner (senderId)
+    case 'draft->pending_supervisor':
+    case 'draft->pending_manager': {
+      // Must be document owner (senderId) — ANY role (staff, supervisor, manager) can create/initiate
       if (callerId !== document.senderId) {
         return {
           valid: false,
@@ -61,94 +72,36 @@ export function validateTransition(
           httpStatus: 403,
         };
       }
-      break;
-    }
 
-    case 'pending_supervisor->pending_manager':
-    case 'pending_supervisor->rejected': {
-      // Must be Supervisor (role = 'supervisor')
-      if (callerRole !== 'supervisor') {
+      // Upfront Marker & Recipient Completeness Validation
+      const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+      if (sortedSignatories.length === 0) {
         return {
           valid: false,
-          error: `Forbidden: Only Supervisor users can sign or reject at this stage (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
-      // Must be the assigned Supervisor signatory on the document
-      const assignedSupervisor = document.signatories?.find(
-        (s: any) => s.user?.id === callerId && s.user?.accessRole === 'supervisor'
-      );
-      if (!assignedSupervisor) {
-        return {
-          valid: false,
-          error: 'Forbidden: You are not assigned as a Supervisor signatory on this document.',
-          httpStatus: 403,
-        };
-      }
-      break;
-    }
-
-    case 'pending_manager->locked': {
-      // Must be Manager (role = 'manager')
-      if (callerRole !== 'manager') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Manager users can finalize/lock documents (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
-      // Must be the assigned Manager signatory on the document
-      const assignedManager = document.signatories?.find(
-        (s: any) => s.user?.id === callerId && s.user?.accessRole === 'manager'
-      );
-      if (!assignedManager) {
-        return {
-          valid: false,
-          error: 'Forbidden: You are not assigned as a Manager signatory on this document.',
-          httpStatus: 403,
+          error: 'Cannot send document: At least one recipient/signatory must be added.',
+          httpStatus: 400,
         };
       }
 
-      // Verify signature evidence is present for BOTH Supervisor and Manager (FR-008)
-      // Resolve markers by combining incoming request body markers and database markers
-      const resolvedMarkersMap = new Map<string, any>();
-      if (document.markers) {
-        for (const m of document.markers) {
-          resolvedMarkersMap.set(m.id, m);
-        }
-      }
-      if (incomingMarkers) {
-        for (const m of incomingMarkers) {
-          const existing = resolvedMarkersMap.get(m.id);
-          resolvedMarkersMap.set(m.id, {
-            ...existing,
-            ...m,
-            assignedToId: m.assignedTo?.id || existing?.assignedToId,
-          });
-        }
-      }
+      const recipients = sortedSignatories.map((s: any) => s.user || userMap?.get(s.userId) || { id: s.userId });
+      const currentMarkers = incomingMarkers || document.markers || [];
+      const markerCheck = validateMarkersAndRecipients(currentMarkers, recipients, userMap || new Map(), document.senderId, document.sender?.email);
 
-      const allResolvedMarkers = Array.from(resolvedMarkersMap.values());
-
-      const supervisorMarker = allResolvedMarkers.find(m => {
-        const userId = m.assignedToId || m.assignedTo?.id;
-        const user = userMap?.get(userId);
-        return user?.accessRole === 'supervisor';
-      });
-
-      const managerMarker = allResolvedMarkers.find(m => {
-        const userId = m.assignedToId || m.assignedTo?.id;
-        const user = userMap?.get(userId);
-        return user?.accessRole === 'manager';
-      });
-
-      const hasSupervisorSig = supervisorMarker && supervisorMarker.signed && supervisorMarker.signature;
-      const hasManagerSig = managerMarker && managerMarker.signed && managerMarker.signature;
-
-      if (!hasSupervisorSig || !hasManagerSig) {
+      if (!markerCheck.valid) {
         return {
           valid: false,
-          error: 'Bad Request: Missing signature evidence. Both Supervisor and Manager signatures must be present and signed to lock the document.',
+          error: markerCheck.error,
+          httpStatus: 400,
+        };
+      }
+
+      // Verify requested initial status matches recipient #1's accessRole
+      const firstRole = sortedSignatories[0].user?.accessRole || userMap?.get(sortedSignatories[0].userId)?.accessRole || 'supervisor';
+      const expectedInitialStatus = `pending_${firstRole}`;
+      if (requestedStatus !== expectedInitialStatus) {
+        return {
+          valid: false,
+          error: `Invalid transition target: Expected initial status '${expectedInitialStatus}' for recipient #1 (role '${firstRole}'), got '${requestedStatus}'.`,
           httpStatus: 400,
         };
       }
@@ -156,14 +109,6 @@ export function validateTransition(
     }
 
     case 'rejected->draft': {
-      // Must be Staff (role = 'user')
-      if (callerRole !== 'user') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Staff users can resubmit a rejected document (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
       // Must be document owner (senderId)
       if (callerId !== document.senderId) {
         return {
@@ -175,12 +120,75 @@ export function validateTransition(
       break;
     }
 
-    default:
+    default: {
+      if (currentStatus.startsWith('pending_')) {
+        const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const resolvedMarkers = resolveMarkers(document.markers, incomingMarkers);
+
+        // 1. Identify current active signatory expecting signature before incoming markers are applied
+        const currentActiveSignatory = sortedSignatories.find((sig: any) => {
+          const sigMarkers = (document.markers || []).filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sig.userId
+          );
+          return sigMarkers.length > 0 && sigMarkers.some((m: any) => !m.signed);
+        }) || sortedSignatories[sortedSignatories.length - 1];
+
+        // 2. Validate caller identity
+        const activeUserId = currentActiveSignatory?.userId || currentActiveSignatory?.user?.id;
+        if (activeUserId && callerId !== activeUserId) {
+          return {
+            valid: false,
+            error: `Forbidden: It is not your turn to sign this document. Awaiting signature from recipient #${currentActiveSignatory?.order}.`,
+            httpStatus: 403,
+          };
+        }
+
+        // 3. Handle Rejection (allowed if caller is the current active signatory)
+        if (requestedStatus === 'rejected') {
+          break;
+        }
+
+        // 4. Compute expected next status AFTER applying incoming signatures
+        const nextUnsignedSignatory = sortedSignatories.find((sig: any) => {
+          const sigMarkers = resolvedMarkers.filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sig.userId
+          );
+          return sigMarkers.some((m: any) => !m.signed);
+        });
+
+        const expectedNextStatus = nextUnsignedSignatory
+          ? `pending_${nextUnsignedSignatory.user?.accessRole || userMap?.get(nextUnsignedSignatory.userId)?.accessRole || 'supervisor'}`
+          : 'locked';
+
+        // 5. Enforce exact match between caller's requested target and server-computed target
+        if (requestedStatus !== expectedNextStatus) {
+          return {
+            valid: false,
+            error: `Invalid transition target: Requested status '${requestedStatus}' does not match expected next status '${expectedNextStatus}'.`,
+            httpStatus: 400,
+          };
+        }
+
+        // 6. If locking, ensure every signature marker across all recipients is signed
+        if (expectedNextStatus === 'locked') {
+          const allSigned = resolvedMarkers.length > 0 && resolvedMarkers.every((m: any) => m.signed);
+          if (!allSigned) {
+            return {
+              valid: false,
+              error: 'Bad Request: Missing signature evidence. All assigned signature markers must be signed to lock the document.',
+              httpStatus: 400,
+            };
+          }
+        }
+        break;
+      }
+
       return {
         valid: false,
         error: `System Error: Transition rules for path '${transitionPath}' are not defined.`,
         httpStatus: 500,
       };
+    }
   }
 
   return { valid: true };
@@ -189,12 +197,15 @@ export function validateTransition(
 /**
  * Validates that:
  * 1. At least one signature marker exists.
- * 2. Each recipient has at least one marker specifically assigned to them (directly or via fallback mapping).
+ * 2. Each recipient has at least one marker specifically assigned to them.
+ * 3. The initiator (senderId/senderEmail) is NOT included as a recipient.
  */
 export function validateMarkersAndRecipients(
   markers: any[],
   recipients: any[],
-  userMap: Map<string, any>
+  userMap: Map<string, any>,
+  senderId?: string,
+  senderEmail?: string
 ): { valid: boolean; error?: string } {
   if (!markers || markers.length === 0) {
     return {
@@ -208,6 +219,24 @@ export function validateMarkersAndRecipients(
       valid: false,
       error: 'Cannot send invitations: The document has no recipients.',
     };
+  }
+
+  // Prevent initiator from being added as a recipient/signatory
+  if (senderId || senderEmail) {
+    const isSelfIncluded = recipients.some((r: any) => {
+      const rId = r.id || r.userId;
+      const rEmail = String(r.email || '').trim().toLowerCase();
+      if (senderId && rId === senderId) return true;
+      if (senderEmail && rEmail && rEmail === String(senderEmail).trim().toLowerCase()) return true;
+      return false;
+    });
+
+    if (isSelfIncluded) {
+      return {
+        valid: false,
+        error: 'Cannot send invitations: Initiator (document creator) cannot be added as a recipient or signatory on their own document.',
+      };
+    }
   }
 
   const recipientEmails = recipients.map((r: any) => String(r.email || '').trim().toLowerCase());
@@ -229,10 +258,10 @@ export function validateMarkersAndRecipients(
             const dbUser = userMap.get(userId);
             if (dbUser) {
               markerEmail = String(dbUser.email || '').trim().toLowerCase();
-                }
-              }
             }
           }
+        }
+      }
 
       if (markerEmail) {
         if (markerEmail === recipientEmail) {
@@ -252,4 +281,5 @@ export function validateMarkersAndRecipients(
 
   return { valid: true };
 }
+
 

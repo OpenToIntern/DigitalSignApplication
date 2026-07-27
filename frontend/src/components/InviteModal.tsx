@@ -42,7 +42,7 @@ export default function InviteModal({ documentName, initialSignatories, markers,
         const data = await res.json()
         const filtered = data
           .map(normalizeUser)
-          .filter((u: User) => u.accessRole === 'supervisor' || u.accessRole === 'manager')
+          .filter((u: User) => (u.accessRole === 'supervisor' || u.accessRole === 'manager') && u.id !== currentUser?.id && u.email?.toLowerCase() !== currentUser?.email?.toLowerCase())
         setLiveReviewers(filtered)
         if (filtered.length > 0) {
           setSelectedReviewerId(filtered[0].id)
@@ -52,7 +52,7 @@ export default function InviteModal({ documentName, initialSignatories, markers,
       }
     }
     fetchUsers()
-  }, [])
+  }, [currentUser])
 
   const hasSupervisor = signatories.some(s => s.accessRole === 'supervisor')
   const hasManager = signatories.some(s => s.accessRole === 'manager')
@@ -66,7 +66,8 @@ export default function InviteModal({ documentName, initialSignatories, markers,
     })
   })
 
-  const canSend = signatories.length > 0 && hasSupervisor && hasManager && hasAtLeastOneMarker && hasMarkersForAll
+  // Can send if at least 1 recipient is added, at least 1 marker placed, and all recipients have markers
+  const canSend = signatories.length > 0 && hasAtLeastOneMarker && hasMarkersForAll
   const firstRecipient = signatories[0]
 
   const emailPreview = useMemo(() => {

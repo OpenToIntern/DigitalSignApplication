@@ -49,14 +49,14 @@ function ManagerDocCard({
 
       <div className="flex gap-2">
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=review`)}
           disabled={isLocked}
           className="btn-ghost text-xs flex-1 justify-center disabled:opacity-40"
         >
           <Eye size={13} /> Review
         </button>
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
           disabled={isLocked}
           className="btn-primary text-xs flex-1 justify-center disabled:opacity-40"
         >

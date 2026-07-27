@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   FileText, ChevronLeft, ChevronRight, Users, Plus, Send,
   PenSquare, Lock, Calendar, Eye, ZoomIn, ZoomOut, RotateCcw, RotateCw, XCircle, AlertCircle
@@ -19,6 +19,8 @@ export default function DocumentEditor() {
   const { id } = useParams<{ id: string }>()
   const { documents, updateDocument, currentUser, token } = useApp()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const isReviewMode = searchParams.get('mode') === 'review'
 
   const doc = documents.find(d => d.id === id)
 
@@ -323,13 +325,13 @@ export default function DocumentEditor() {
     )
   }
 
-  const isStaff = currentUser?.accessRole === 'user'
+  const isOwner = currentUser?.id === doc.senderId || currentUser?.id === doc.sender?.id
   const isSupervisor = currentUser?.accessRole === 'supervisor'
   const isManager = currentUser?.accessRole === 'manager'
 
-  const canPlaceMarkers = isStaff && (doc.status === 'draft' || doc.status === 'rejected')
-  const canSupervisorSign = isSupervisor && doc.status === 'pending_supervisor'
-  const canManagerSign = isManager && doc.status === 'pending_manager'
+  const canPlaceMarkers = isOwner && (doc.status === 'draft' || doc.status === 'rejected') && !isReviewMode
+  const canSupervisorSign = !isReviewMode && isSupervisor && doc.status === 'pending_supervisor'
+  const canManagerSign = !isReviewMode && isManager && doc.status === 'pending_manager'
   const canMoveMarker = (marker: Marker) => {
     return canPlaceMarkers
   }
@@ -841,11 +843,6 @@ export default function DocumentEditor() {
               >
                 <ZoomIn size={14} />
               </button>
-            </div>
-            <div className="w-px h-4 bg-outline-variant" />
-            <div className="flex items-center gap-3">
-              <button className="p-1 hover:bg-surface-container rounded" title="Undo"><RotateCcw size={14} /></button>
-              <button className="p-1 hover:bg-surface-container rounded" title="Redo"><RotateCw size={14} /></button>
             </div>
             <div className="w-px h-4 bg-outline-variant" />
             <div className="flex items-center gap-2">

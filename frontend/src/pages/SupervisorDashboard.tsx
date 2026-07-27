@@ -33,19 +33,19 @@ function DocCard({ doc }: { doc: Document }) {
 
       <div className="flex gap-2">
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=review`)}
           className="btn-ghost text-xs flex-1 justify-center"
         >
           <Eye size={13} /> Review
         </button>
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=review`)}
           className="btn-secondary text-xs flex-1 justify-center text-error border-error/30 hover:bg-error/5"
         >
           <XCircle size={13} /> Reject
         </button>
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
           className="btn-primary text-xs flex-1 justify-center"
         >
           <PenSquare size={13} /> Sign Now

@@ -1248,8 +1248,8 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       return;
     }
 
-    // Validation for invitations (pending_supervisor)
-    if (status === 'pending_supervisor') {
+    // Validation for invitations (pending_*)
+    if (status && status.startsWith('pending_')) {
       const allUsers = await prisma.user.findMany();
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
@@ -1261,7 +1261,7 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
         finalRecipients = existing.signatories.map((s: any) => s.user);
       }
 
-      const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap);
+      const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap, existing.senderId, existing.sender?.email);
       if (!check.valid) {
         res.status(400).json({ error: check.error });
         return;
@@ -1274,18 +1274,12 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       return;
     }
 
-    // Role check: only the Staff user who is the document's initiator may modify recipients
+    // Role check: only the user who is the document's initiator may modify recipients
     if (recipients !== undefined) {
       const callerId = req.user!.id;
-      const callerRole = req.user!.role;
-
-      if (callerRole === 'supervisor' || callerRole === 'manager') {
-        res.status(403).json({ error: 'Forbidden: Supervisor or Manager cannot modify recipients.' });
-        return;
-      }
 
       if (callerId !== existing.senderId) {
-        res.status(403).json({ error: 'Forbidden: Only the Staff user who is the document\'s initiator may modify recipients.' });
+        res.status(403).json({ error: 'Forbidden: Only the document initiator may modify recipients.' });
         return;
       }
 
@@ -1709,33 +1703,24 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
     });
 
     if (finalDoc && status !== undefined && status !== existing.status) {
-      if (status === 'pending_supervisor') {
-        const supervisorSig = finalDoc.signatories.find(
-          (s: any) => s.user.accessRole === 'supervisor'
-        );
-        if (supervisorSig && supervisorSig.user) {
+      if (status.startsWith('pending_')) {
+        const sortedSignatories = [...(finalDoc.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const activeSig = sortedSignatories.find((sig: any) => {
+          const sigMarkers = (finalDoc.markers || []).filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sig.userId
+          );
+          return sigMarkers.some((m: any) => !m.signed);
+        }) || sortedSignatories[0];
+
+        if (activeSig && activeSig.user) {
           createAndSendNotification(
-            supervisorSig.user.id,
+            activeSig.user.id,
             id,
             'invited_to_sign',
             `Your signature is required on '${finalDoc.name}'.`,
-            supervisorSig.user.googleEmail,
+            activeSig.user.googleEmail,
             finalDoc.name
-          ).catch(err => console.error('Error in createAndSendNotification for supervisor:', err));
-        }
-      } else if (status === 'pending_manager') {
-        const managerSig = finalDoc.signatories.find(
-          (s: any) => s.user.accessRole === 'manager'
-        );
-        if (managerSig && managerSig.user) {
-          createAndSendNotification(
-            managerSig.user.id,
-            id,
-            'invited_to_sign',
-            `Your signature is required on '${finalDoc.name}' as the previous signatory has signed.`,
-            managerSig.user.googleEmail,
-            finalDoc.name
-          ).catch(err => console.error('Error in createAndSendNotification for manager:', err));
+          ).catch(err => console.error('Error in createAndSendNotification for active signatory:', err));
         }
       } else if (status === 'locked') {
         // FR-010/FR-013: Notify ALL parties (initiator + every signatory)
