@@ -1807,6 +1807,19 @@ app.get('/api/notifications', authenticateJWT, async (req: AuthenticatedRequest,
     console.error('Error fetching notifications:', err);
     res.status(500).json({ error: err.message });
   }
+// PUT /api/notifications/read-all - mark all user notifications as read
+app.put('/api/notifications/read-all', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true }
+    });
+    res.json({ message: 'All notifications marked as read' });
+  } catch (err: any) {
+    console.error('Error marking all notifications as read:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT /api/notifications/:id/read - mark notification as read

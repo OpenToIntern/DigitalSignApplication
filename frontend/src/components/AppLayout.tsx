@@ -98,6 +98,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const handleMarkAllRead = async () => {
+    if (!token) return
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/notifications/read-all`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err)
+    }
+  }
+
   const formatRelativeTime = (dateStr: string) => {
     const date = new Date(dateStr)
     if (isNaN(date.getTime())) return ''
@@ -315,9 +330,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <div className="px-4 py-2 flex items-center justify-between bg-surface-container-low/50">
                     <span className="font-semibold text-xs text-on-surface">Notifications</span>
                     {unreadCount > 0 && (
-                      <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-                        {unreadCount} unread
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleMarkAllRead}
+                          className="text-[10px] text-primary hover:underline font-medium"
+                        >
+                          Mark all as read
+                        </button>
+                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                          {unreadCount} unread
+                        </span>
+                      </div>
                     )}
                   </div>
                   <div className="max-h-72 overflow-y-auto divide-y divide-outline-variant/20">
