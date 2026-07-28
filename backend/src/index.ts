@@ -48,7 +48,7 @@ const otpStore = new Map<string, OtpSession>();
 const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
-const prisma = new PrismaClient();
+export const prisma = new PrismaClient();
 
 async function createAndSendNotification(
   userId: string,
@@ -116,14 +116,13 @@ app.use(express.json({ limit: '10mb' }));
 // Seed mock users into the database
 async function seedMockUsers() {
   const mockUsers = [
-    { id: 'u-001', name: 'Richie Frederico Wong', email: 'jesyntaivolairia05@gmail.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: false },
-    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'cheritablemoney@gmail.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true },
-    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jessyharia05@gmail.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true },
-    { id: 'u-004', name: 'Ricky Takahindangen', email: 'ricky.takahindangen@companyx.com', googleEmail: null, accessRole: 'user', password: null, nikVerified: true },
+    { id: 'u-001', name: 'Richie Frederico Wong', email: 'jesyntaivolairia05@gmail.com', googleEmail: 'jesyntaivolairia05@gmail.com', accessRole: 'user', password: 'Staff2026', nikVerified: true, nik: '3175010101990001' },
+    { id: 'u-002', name: 'Inria Altje Kalalo', email: 'cheritablemoney@gmail.com', googleEmail: 'cheritablemoney@gmail.com', accessRole: 'supervisor', password: 'Supervisor2026', nikVerified: true, nik: '3175020202920002' },
+    { id: 'u-003', name: 'Jesynta Ivolaria Harya', email: 'jessyharia05@gmail.com', googleEmail: 'jessyharia05@gmail.com', accessRole: 'manager', password: 'Manager2026', nikVerified: true, nik: '3175030303930003' },
     // --- Lecturer review accounts (permanent, seeded on every startup) ---
-    { id: null, name: 'Farah Manager', email: 'farahyulianti.tech21@gmail.com', googleEmail: 'farahyulianti.tech21@gmail.com', accessRole: 'manager', password: 'ManagerReview2026', nikVerified: true },
-    { id: null, name: 'Farah Supervisor', email: 'reviewfarmei20@gmail.com', googleEmail: 'reviewfarmei20@gmail.com', accessRole: 'supervisor', password: 'SupervisorReview2026', nikVerified: true },
-    { id: null, name: 'Farah Yulianti', email: 'serpentclaw22@gmail.com', googleEmail: 'serpentclaw22@gmail.com', accessRole: 'user', password: 'StaffReview2026', nikVerified: true },
+    { id: null, name: 'Farah Manager', email: 'farahyulianti.tech21@gmail.com', googleEmail: 'farahyulianti.tech21@gmail.com', accessRole: 'manager', password: 'ManagerReview2026', nikVerified: true, nik: '1234567890123001' },
+    { id: null, name: 'Farah Supervisor', email: 'reviewfarmei20@gmail.com', googleEmail: 'reviewfarmei20@gmail.com', accessRole: 'supervisor', password: 'SupervisorReview2026', nikVerified: true, nik: '1234567890123002' },
+    { id: null, name: 'Farah Yulianti', email: 'serpentclaw22@gmail.com', googleEmail: 'serpentclaw22@gmail.com', accessRole: 'user', password: 'StaffReview2026', nikVerified: true, nik: '1234567890123003' },
   ];
 
   for (const user of mockUsers) {
@@ -132,8 +131,9 @@ async function seedMockUsers() {
     const passwordHash = user.password && (!existing || !existing.passwordHash)
       ? await bcrypt.hash(user.password, 12)
       : (existing ? existing.passwordHash : null);
-    // Preserve nikVerified from DB if already true — never downgrade a verified account on restart
-    const nikVerified = existing ? (existing.nikVerified || user.nikVerified) : user.nikVerified;
+
+    // Preserve existing accessRole if user already exists so role modifications persist across restarts
+    const accessRole = existing ? existing.accessRole : user.accessRole;
 
     // Build create payload — only include id if one is specified (auto-generate for Farah accounts)
     const createData: any = {
@@ -142,7 +142,8 @@ async function seedMockUsers() {
       googleEmail: user.googleEmail,
       accessRole: user.accessRole,
       passwordHash: passwordHash,
-      nikVerified: user.nikVerified
+      nikVerified: true,
+      nik: user.nik,
     };
     if (user.id) createData.id = user.id;
 
@@ -151,9 +152,10 @@ async function seedMockUsers() {
       update: {
         name: user.name,
         googleEmail: user.googleEmail,
-        accessRole: user.accessRole,
+        accessRole: accessRole,
         passwordHash: passwordHash,
-        nikVerified: nikVerified
+        nikVerified: true,
+        nik: user.nik,
       },
       create: createData
     });
@@ -639,13 +641,97 @@ app.post('/api/auth/resend-otp', async (req: Request, res: Response): Promise<an
   }
 });
 
-// GET users
-app.get('/api/users', async (req: Request, res: Response) => {
+// POST /api/auth/refresh — issue fresh 30-minute JWT for active session
+app.post('/api/auth/refresh', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
   try {
-    const users = await prisma.user.findMany();
+    const userId = req.user!.id;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(401).json({ error: 'User account no longer exists.' });
+    }
+
+    const newToken = jwt.sign(
+      { userId: user.id, role: user.accessRole },
+      JWT_SECRET,
+      { expiresIn: '30m' }
+    );
+
+    res.json({
+      token: newToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        accessRole: user.accessRole,
+        nik: user.nik
+      }
+    });
+  } catch (error: any) {
+    console.error('Token Refresh Error:', error);
+    res.status(500).json({ error: error.message || 'Token refresh failed.' });
+  }
+});
+
+// GET /api/users - fetch all users for signatory selection & team listing
+app.get('/api/users', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        accessRole: true,
+        nik: true,
+        nikVerified: true,
+      },
+      orderBy: { name: 'asc' }
+    });
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/users/:id/role - update accessRole (Manager authorization required)
+app.patch('/api/users/:id/role', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const callerRole = req.user!.role;
+    const callerId = req.user!.id;
+    const { id } = req.params;
+    const { accessRole } = req.body;
+
+    if (callerRole !== 'manager') {
+      return res.status(403).json({ error: 'Forbidden: Only managers can modify user access roles.' });
+    }
+
+    const allowedRoles = ['user', 'supervisor', 'manager'];
+    if (!accessRole || !allowedRoles.includes(accessRole)) {
+      return res.status(400).json({ error: 'Invalid access role. Must be user, supervisor, or manager.' });
+    }
+
+    if (id === callerId) {
+      return res.status(400).json({ error: 'You cannot change your own role to prevent accidental lockout.' });
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Target user not found.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { accessRole }
+    });
+
+    res.json({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      accessRole: updatedUser.accessRole,
+    });
+  } catch (error: any) {
+    console.error('Update User Role Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to update user role.' });
   }
 });
 
@@ -693,6 +779,65 @@ app.get('/api/users/profile', authenticateJWT, async (req: AuthenticatedRequest,
   } catch (error: any) {
     console.error('Get Profile Error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/users/verify-nik - verify NIK against MockDukcapilRecord for authenticated user
+app.post('/api/users/verify-nik', authenticateJWT, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const userId = req.user!.id;
+    const { nik } = req.body;
+
+    if (!nik) {
+      return res.status(400).json({ error: 'NIK is required.' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const trimmedNik = String(nik).trim();
+
+    // Check if this NIK is already registered to another user
+    const existingNik = await prisma.user.findFirst({
+      where: {
+        nik: trimmedNik,
+        NOT: { id: userId }
+      }
+    });
+
+    if (existingNik) {
+      return res.status(409).json({ error: 'This NIK is already registered to another account.' });
+    }
+
+    // Look up MockDukcapilRecord by NIK
+    const dukcapilRecord = await prisma.mockDukcapilRecord.findUnique({
+      where: { nik: trimmedNik }
+    });
+
+    // Check if NIK exists and matches the User's name case-insensitively
+    if (!dukcapilRecord || dukcapilRecord.fullName.toLowerCase() !== user.name.toLowerCase()) {
+      return res.status(400).json({ error: "NIK does not match our records or account name." });
+    }
+
+    // Update User status in DB
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        nikVerified: true,
+        nik: trimmedNik
+      }
+    });
+
+    return res.json({
+      success: true,
+      nikVerified: updatedUser.nikVerified,
+      nik: updatedUser.nik
+    });
+  } catch (error: any) {
+    console.error('Verify NIK Error:', error);
+    res.status(500).json({ error: error.message || 'Verification failed.' });
   }
 });
 
@@ -1016,28 +1161,20 @@ app.post('/api/documents/verify', authenticateJWT, upload.single('file'), async 
   }
 });
 
-// GET /api/documents - get documents scoped to the authenticated user's role
+// GET /api/documents
 app.get('/api/documents', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const userRole = req.user!.role; // 'user', 'supervisor', 'manager'
 
-    let whereClause: any;
-
-    if (userRole === 'supervisor' || userRole === 'manager') {
-      // Supervisors/Managers only see documents where they are an assigned
-      // signatory OR have a marker assigned to them — never drafts or other
-      // documents they have no relationship to.
-      whereClause = {
-        OR: [
-          { signatories: { some: { userId } } },
-          { markers: { some: { assignedToId: userId } } },
-        ],
-      };
-    } else {
-      // Staff ('user') sees only documents they created
-      whereClause = { senderId: userId };
-    }
+    // Users (Staff, Supervisor, Manager) see documents where they are the creator (senderId),
+    // an assigned signatory, OR have a marker assigned to them.
+    const whereClause = {
+      OR: [
+        { senderId: userId },
+        { signatories: { some: { userId } } },
+        { markers: { some: { assignedToId: userId } } },
+      ],
+    };
 
     const docs = await prisma.document.findMany({
       where: whereClause,
@@ -1086,20 +1223,15 @@ app.get('/api/documents', authenticateJWT, async (req: AuthenticatedRequest, res
 app.get('/api/audit-logs', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const userRole = req.user!.role;
 
     // Build a document-scoping filter identical to GET /api/documents
-    let docWhereClause: any;
-    if (userRole === 'supervisor' || userRole === 'manager') {
-      docWhereClause = {
-        OR: [
-          { signatories: { some: { userId } } },
-          { markers: { some: { assignedToId: userId } } },
-        ],
-      };
-    } else {
-      docWhereClause = { senderId: userId };
-    }
+    const docWhereClause = {
+      OR: [
+        { senderId: userId },
+        { signatories: { some: { userId } } },
+        { markers: { some: { assignedToId: userId } } },
+      ],
+    };
 
     const logs = await prisma.auditLog.findMany({
       where: {
@@ -1226,12 +1358,14 @@ app.get('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
 app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, pageCount, markers, recipients, auditLog, rejectionComment } = req.body;
+    let { status } = req.body;
+    const { pageCount, markers, recipients, auditLog, rejectionComment } = req.body;
 
     // Fetch existing document to prevent overwriting missing fields
     const existing = await prisma.document.findUnique({
       where: { id },
       include: {
+        sender: true,
         markers: true,
         signatories: {
           include: {
@@ -1248,20 +1382,21 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       return;
     }
 
-    // Validation for invitations (pending_supervisor)
-    if (status === 'pending_supervisor') {
+    let finalRecipients: any[] = [];
+    if (recipients !== undefined) {
+      finalRecipients = recipients;
+    } else {
+      finalRecipients = existing.signatories.map((s: any) => s.user);
+    }
+
+    // Validation for invitations (pending_*)
+    if (status && status.startsWith('pending_')) {
       const allUsers = await prisma.user.findMany();
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const finalMarkers = markers !== undefined ? markers : existing.markers;
-      let finalRecipients: any[] = [];
-      if (recipients !== undefined) {
-        finalRecipients = recipients;
-      } else {
-        finalRecipients = existing.signatories.map((s: any) => s.user);
-      }
 
-      const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap);
+      const check = validateMarkersAndRecipients(finalMarkers, finalRecipients, userMap, existing.senderId, existing.sender?.email);
       if (!check.valid) {
         res.status(400).json({ error: check.error });
         return;
@@ -1274,18 +1409,12 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       return;
     }
 
-    // Role check: only the Staff user who is the document's initiator may modify recipients
+    // Role check: only the user who is the document's initiator may modify recipients
     if (recipients !== undefined) {
       const callerId = req.user!.id;
-      const callerRole = req.user!.role;
-
-      if (callerRole === 'supervisor' || callerRole === 'manager') {
-        res.status(403).json({ error: 'Forbidden: Supervisor or Manager cannot modify recipients.' });
-        return;
-      }
 
       if (callerId !== existing.senderId) {
-        res.status(403).json({ error: 'Forbidden: Only the Staff user who is the document\'s initiator may modify recipients.' });
+        res.status(403).json({ error: 'Forbidden: Only the document initiator may modify recipients.' });
         return;
       }
 
@@ -1355,7 +1484,7 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
     }
 
     // Validate status transition using the centralized state machine
-    if (status !== undefined && status !== existing.status) {
+    if (status !== undefined || markers !== undefined) {
       const callerId = req.user!.id;
       const callerRole = req.user!.role;
 
@@ -1363,12 +1492,20 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       const allUsers = await prisma.user.findMany();
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
+      // Patch existing document with incoming recipients to validate against the intended future state
+      const patchedExisting = {
+        ...existing,
+        signatories: finalRecipients && finalRecipients.length > 0
+          ? finalRecipients.map((u, i) => ({ user: u, userId: u.id, order: i + 1 }))
+          : existing.signatories
+      };
+
       const validationResult = validateTransition(
         existing.status,
         status,
         callerId,
         callerRole,
-        existing,
+        patchedExisting,
         markers,
         userMap
       );
@@ -1376,6 +1513,11 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
       if (!validationResult.valid) {
         res.status(validationResult.httpStatus || 400).json({ error: validationResult.error });
         return;
+      }
+
+      // If status was not explicitly passed in payload, auto-apply the backend computed next status
+      if (!status && validationResult.computedNextStatus) {
+        status = validationResult.computedNextStatus;
       }
     }
 
@@ -1709,33 +1851,36 @@ app.put('/api/documents/:id', authenticateJWT, async (req: AuthenticatedRequest,
     });
 
     if (finalDoc && status !== undefined && status !== existing.status) {
-      if (status === 'pending_supervisor') {
-        const supervisorSig = finalDoc.signatories.find(
-          (s: any) => s.user.accessRole === 'supervisor'
-        );
-        if (supervisorSig && supervisorSig.user) {
-          createAndSendNotification(
-            supervisorSig.user.id,
-            id,
-            'invited_to_sign',
-            `Your signature is required on '${finalDoc.name}'.`,
-            supervisorSig.user.googleEmail,
-            finalDoc.name
-          ).catch(err => console.error('Error in createAndSendNotification for supervisor:', err));
-        }
-      } else if (status === 'pending_manager') {
-        const managerSig = finalDoc.signatories.find(
-          (s: any) => s.user.accessRole === 'manager'
-        );
-        if (managerSig && managerSig.user) {
-          createAndSendNotification(
-            managerSig.user.id,
-            id,
-            'invited_to_sign',
-            `Your signature is required on '${finalDoc.name}' as the previous signatory has signed.`,
-            managerSig.user.googleEmail,
-            finalDoc.name
-          ).catch(err => console.error('Error in createAndSendNotification for manager:', err));
+      if (status.startsWith('pending_')) {
+        const sortedSignatories = [...(finalDoc.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const activeOrder = sortedSignatories.find((sig: any) => {
+          const sigUserId = sig.userId || sig.user?.id;
+          const sigMarkers = (finalDoc.markers || []).filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
+          );
+          return sigMarkers.length > 0 && sigMarkers.some((m: any) => !m.signed);
+        })?.order || (sortedSignatories[0]?.order ?? 1);
+
+        const activeParallelSigs = sortedSignatories.filter((sig: any) => {
+          if (sig.order !== activeOrder) return false;
+          const sigUserId = sig.userId || sig.user?.id;
+          const sigMarkers = (finalDoc.markers || []).filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
+          );
+          return sigMarkers.some((m: any) => !m.signed);
+        });
+
+        for (const sig of activeParallelSigs) {
+          if (sig && sig.user) {
+            createAndSendNotification(
+              sig.user.id,
+              id,
+              'invited_to_sign',
+              `Your signature is required on '${finalDoc.name}'.`,
+              sig.user.googleEmail,
+              finalDoc.name
+            ).catch(err => console.error(`Error in createAndSendNotification for active signatory ${sig.user.id}:`, err));
+          }
         }
       } else if (status === 'locked') {
         // FR-010/FR-013: Notify ALL parties (initiator + every signatory)
@@ -1810,6 +1955,21 @@ app.get('/api/notifications', authenticateJWT, async (req: AuthenticatedRequest,
     res.json(notifications);
   } catch (err: any) {
     console.error('Error fetching notifications:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/notifications/read-all - mark all user notifications as read
+app.put('/api/notifications/read-all', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true }
+    });
+    res.json({ message: 'All notifications marked as read' });
+  } catch (err: any) {
+    console.error('Error marking all notifications as read:', err);
     res.status(500).json({ error: err.message });
   }
 });
