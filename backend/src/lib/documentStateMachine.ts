@@ -1,7 +1,10 @@
+const ALLOWED_PENDING = ['pending_user', 'pending_supervisor', 'pending_manager', 'locked', 'rejected'];
+
 export const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ['pending_supervisor'],
-  pending_supervisor: ['pending_manager', 'rejected'],
-  pending_manager: ['locked'],
+  draft: ['pending_user', 'pending_supervisor', 'pending_manager'],
+  pending_user: ALLOWED_PENDING,
+  pending_supervisor: ALLOWED_PENDING,
+  pending_manager: ALLOWED_PENDING,
   rejected: ['draft'],
   locked: [],
 };
@@ -10,11 +13,13 @@ export interface StateMachineResult {
   valid: boolean;
   error?: string;
   httpStatus?: number;
+  computedNextStatus?: string;
 }
 
 /**
  * Validates a document status transition on the backend.
- * Enforces role check, assignment check, state transitions, and signature verification.
+ * Enforces role check, assignment check, state transitions, signature verification,
+ * and dynamic recipient order chain with parallel order group support.
  */
 export function validateTransition(
   currentStatus: string,
@@ -30,9 +35,9 @@ export function validateTransition(
     return { valid: true };
   }
 
-  // 1. Check if the status transition exists in the allowed transitions list
+  // 1. Check if the status transition exists in the allowed transitions list (if requestedStatus is provided)
   const allowed = VALID_TRANSITIONS[currentStatus];
-  if (!allowed || !allowed.includes(requestedStatus)) {
+  if (requestedStatus !== undefined && (!allowed || !allowed.includes(requestedStatus))) {
     return {
       valid: false,
       error: `Invalid transition: document cannot move from '${currentStatus}' to '${requestedStatus}'.`,
@@ -40,19 +45,28 @@ export function validateTransition(
     };
   }
 
-  // 2. Validate role authorization and assignment based on transition path
-  const transitionPath = `${currentStatus}->${requestedStatus}`;
-
-  switch (transitionPath) {
-    case 'draft->pending_supervisor': {
-      // Must be Staff (role = 'user')
-      if (callerRole !== 'user') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Staff users can submit documents for review (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
+  // Helper to resolve markers (merging incoming body markers with DB markers)
+  const resolveMarkers = (dbMarkers: any[] = [], reqMarkers?: any[]) => {
+    const map = new Map<string, any>();
+    for (const m of dbMarkers) map.set(m.id, { ...m });
+    if (reqMarkers) {
+      for (const m of reqMarkers) {
+        const existing = map.get(m.id);
+        map.set(m.id, {
+          ...existing,
+          ...m,
+          assignedToId: m.assignedTo?.id || m.assignedToId || existing?.assignedToId,
+        });
       }
+    }
+    return Array.from(map.values());
+  };
+
+  // 2. Validate role authorization and assignment based on transition path
+  let computedStatus: string | undefined = undefined;
+
+  switch (currentStatus) {
+    case 'draft': {
       // Must be document owner (senderId)
       if (callerId !== document.senderId) {
         return {
@@ -61,109 +75,45 @@ export function validateTransition(
           httpStatus: 403,
         };
       }
-      break;
-    }
 
-    case 'pending_supervisor->pending_manager':
-    case 'pending_supervisor->rejected': {
-      // Must be Supervisor (role = 'supervisor')
-      if (callerRole !== 'supervisor') {
+      // Upfront Marker & Recipient Completeness Validation
+      const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+      if (sortedSignatories.length === 0) {
         return {
           valid: false,
-          error: `Forbidden: Only Supervisor users can sign or reject at this stage (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
-      // Must be the assigned Supervisor signatory on the document
-      const assignedSupervisor = document.signatories?.find(
-        (s: any) => s.user?.id === callerId && s.user?.accessRole === 'supervisor'
-      );
-      if (!assignedSupervisor) {
-        return {
-          valid: false,
-          error: 'Forbidden: You are not assigned as a Supervisor signatory on this document.',
-          httpStatus: 403,
-        };
-      }
-      break;
-    }
-
-    case 'pending_manager->locked': {
-      // Must be Manager (role = 'manager')
-      if (callerRole !== 'manager') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Manager users can finalize/lock documents (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
-      // Must be the assigned Manager signatory on the document
-      const assignedManager = document.signatories?.find(
-        (s: any) => s.user?.id === callerId && s.user?.accessRole === 'manager'
-      );
-      if (!assignedManager) {
-        return {
-          valid: false,
-          error: 'Forbidden: You are not assigned as a Manager signatory on this document.',
-          httpStatus: 403,
+          error: 'Cannot send document: At least one recipient/signatory must be added.',
+          httpStatus: 400,
         };
       }
 
-      // Verify signature evidence is present for BOTH Supervisor and Manager (FR-008)
-      // Resolve markers by combining incoming request body markers and database markers
-      const resolvedMarkersMap = new Map<string, any>();
-      if (document.markers) {
-        for (const m of document.markers) {
-          resolvedMarkersMap.set(m.id, m);
-        }
-      }
-      if (incomingMarkers) {
-        for (const m of incomingMarkers) {
-          const existing = resolvedMarkersMap.get(m.id);
-          resolvedMarkersMap.set(m.id, {
-            ...existing,
-            ...m,
-            assignedToId: m.assignedTo?.id || existing?.assignedToId,
-          });
-        }
-      }
+      const recipients = sortedSignatories.map((s: any) => s.user || userMap?.get(s.userId) || { id: s.userId });
+      const currentMarkers = incomingMarkers || document.markers || [];
+      const markerCheck = validateMarkersAndRecipients(currentMarkers, recipients, userMap || new Map(), document.senderId, document.sender?.email);
 
-      const allResolvedMarkers = Array.from(resolvedMarkersMap.values());
-
-      const supervisorMarker = allResolvedMarkers.find(m => {
-        const userId = m.assignedToId || m.assignedTo?.id;
-        const user = userMap?.get(userId);
-        return user?.accessRole === 'supervisor';
-      });
-
-      const managerMarker = allResolvedMarkers.find(m => {
-        const userId = m.assignedToId || m.assignedTo?.id;
-        const user = userMap?.get(userId);
-        return user?.accessRole === 'manager';
-      });
-
-      const hasSupervisorSig = supervisorMarker && supervisorMarker.signed && supervisorMarker.signature;
-      const hasManagerSig = managerMarker && managerMarker.signed && managerMarker.signature;
-
-      if (!hasSupervisorSig || !hasManagerSig) {
+      if (!markerCheck.valid) {
         return {
           valid: false,
-          error: 'Bad Request: Missing signature evidence. Both Supervisor and Manager signatures must be present and signed to lock the document.',
+          error: markerCheck.error,
+          httpStatus: 400,
+        };
+      }
+
+      // Verify requested initial status matches recipient #1's accessRole
+      const firstRole = sortedSignatories[0].user?.accessRole || userMap?.get(sortedSignatories[0].userId)?.accessRole || 'user';
+      const expectedInitialStatus = `pending_${firstRole}`;
+      computedStatus = expectedInitialStatus;
+
+      if (requestedStatus && requestedStatus !== expectedInitialStatus) {
+        return {
+          valid: false,
+          error: `Invalid transition target: Expected initial status '${expectedInitialStatus}' for recipient #1 (role '${firstRole}'), got '${requestedStatus}'.`,
           httpStatus: 400,
         };
       }
       break;
     }
 
-    case 'rejected->draft': {
-      // Must be Staff (role = 'user')
-      if (callerRole !== 'user') {
-        return {
-          valid: false,
-          error: `Forbidden: Only Staff users can resubmit a rejected document (got role '${callerRole}').`,
-          httpStatus: 403,
-        };
-      }
+    case 'rejected': {
       // Must be document owner (senderId)
       if (callerId !== document.senderId) {
         return {
@@ -172,29 +122,116 @@ export function validateTransition(
           httpStatus: 403,
         };
       }
+      
+      if (requestedStatus === 'draft') {
+        computedStatus = 'draft';
+      } else {
+        const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const firstRole = sortedSignatories[0]?.user?.accessRole || userMap?.get(sortedSignatories[0]?.userId)?.accessRole || 'user';
+        computedStatus = `pending_${firstRole}`;
+      }
       break;
     }
 
-    default:
+    default: {
+      if (currentStatus.startsWith('pending_')) {
+        const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const resolvedMarkers = resolveMarkers(document.markers, incomingMarkers);
+
+        // 1. Find current active order group
+        const activeOrder = sortedSignatories.find((sig: any) => {
+          const sigUserId = sig.userId || sig.user?.id;
+          const sigMarkers = (document.markers || []).filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
+          );
+          return sigMarkers.length > 0 && sigMarkers.some((m: any) => !m.signed);
+        })?.order || (sortedSignatories[0]?.order ?? 1);
+
+        // 2. Identify all signatories belonging to the active order group
+        const activeGroupSignatories = sortedSignatories.filter((sig: any) => sig.order === activeOrder);
+        const activeGroupUserIds = activeGroupSignatories.map((sig: any) => sig.userId || sig.user?.id);
+
+        // 3. Validate caller identity
+        const isCallerInActiveGroup = activeGroupUserIds.includes(callerId);
+        const callerHasUnsignedMarker = (document.markers || []).some((m: any) => {
+          const mUserId = m.assignedToId || m.assignedTo?.id;
+          return mUserId === callerId && !m.signed;
+        });
+
+        if (!isCallerInActiveGroup || !callerHasUnsignedMarker) {
+          return {
+            valid: false,
+            error: `Forbidden: It is not your turn to sign this document. Awaiting signature(s) for step group #${activeOrder}.`,
+            httpStatus: 403,
+          };
+        }
+
+        // 4. Handle Rejection
+        if (requestedStatus === 'rejected') {
+          computedStatus = 'rejected';
+          break;
+        }
+
+        // 5. Compute expected next status
+        const nextUnsignedSignatory = sortedSignatories.find((sig: any) => {
+          const sigUserId = sig.userId || sig.user?.id;
+          const sigMarkers = resolvedMarkers.filter(
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
+          );
+          return sigMarkers.some((m: any) => !m.signed);
+        });
+
+        const expectedNextStatus = nextUnsignedSignatory
+          ? `pending_${nextUnsignedSignatory.user?.accessRole || userMap?.get(nextUnsignedSignatory.userId)?.accessRole || 'user'}`
+          : 'locked';
+
+        computedStatus = expectedNextStatus;
+
+        // 6. Enforce exact match if requested
+        if (requestedStatus && requestedStatus !== expectedNextStatus) {
+          return {
+            valid: false,
+            error: `Invalid transition target: Requested status '${requestedStatus}' does not match expected next status '${expectedNextStatus}'.`,
+            httpStatus: 400,
+          };
+        }
+
+        // 7. If locking, ensure every signature marker is signed
+        if (expectedNextStatus === 'locked') {
+          const allSigned = resolvedMarkers.length > 0 && resolvedMarkers.every((m: any) => m.signed);
+          if (!allSigned) {
+            return {
+              valid: false,
+              error: 'Bad Request: Missing signature evidence. All assigned signature markers must be signed to lock the document.',
+              httpStatus: 400,
+            };
+          }
+        }
+        break;
+      }
+
       return {
         valid: false,
-        error: `System Error: Transition rules for path '${transitionPath}' are not defined.`,
+        error: `System Error: Transition rules for current state '${currentStatus}' are not defined.`,
         httpStatus: 500,
       };
+    }
   }
 
-  return { valid: true };
+  return { valid: true, computedNextStatus: computedStatus };
 }
 
 /**
  * Validates that:
  * 1. At least one signature marker exists.
- * 2. Each recipient has at least one marker specifically assigned to them (directly or via fallback mapping).
+ * 2. Each recipient has at least one marker specifically assigned to them.
  */
 export function validateMarkersAndRecipients(
   markers: any[],
   recipients: any[],
-  userMap: Map<string, any>
+  userMap: Map<string, any>,
+  senderId?: string,
+  senderEmail?: string
 ): { valid: boolean; error?: string } {
   if (!markers || markers.length === 0) {
     return {
@@ -229,10 +266,10 @@ export function validateMarkersAndRecipients(
             const dbUser = userMap.get(userId);
             if (dbUser) {
               markerEmail = String(dbUser.email || '').trim().toLowerCase();
-                }
-              }
             }
           }
+        }
+      }
 
       if (markerEmail) {
         if (markerEmail === recipientEmail) {
@@ -252,4 +289,5 @@ export function validateMarkersAndRecipients(
 
   return { valid: true };
 }
+
 

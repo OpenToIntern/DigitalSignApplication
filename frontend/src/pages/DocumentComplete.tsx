@@ -19,6 +19,52 @@ export default function DocumentComplete() {
   const doc = documents.find(d => d.id === state?.docId) || documents.find(d => d.status === 'locked')
   const documentName = doc?.name || state?.documentName || 'Standard Enterprise Service Agreement v2.pdf'
 
+  // Dynamically compute actual signatories from document markers / recipients
+  const signatoriesList = React.useMemo(() => {
+    if (!doc) return []
+    const map = new Map<string, { id: string; name: string; initials: string; signed: boolean }>()
+
+    if (doc.markers && doc.markers.length > 0) {
+      doc.markers.forEach(m => {
+        if (m.assignedTo) {
+          const u = m.assignedTo
+          const initials = u.initials || u.name.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '??'
+          const existing = map.get(u.id)
+          map.set(u.id, {
+            id: u.id,
+            name: u.name,
+            initials,
+            signed: existing ? (existing.signed || m.signed) : m.signed
+          })
+        }
+      })
+    } else if (doc.recipients && doc.recipients.length > 0) {
+      doc.recipients.forEach(u => {
+        const initials = u.initials || u.name.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '??'
+        map.set(u.id, {
+          id: u.id,
+          name: u.name,
+          initials,
+          signed: doc.status === 'locked'
+        })
+      })
+    }
+
+    return Array.from(map.values())
+  }, [doc])
+
+  const signedCount = signatoriesList.filter(s => s.signed).length
+  const totalSignatories = signatoriesList.length || 1
+  const displaySignatories = signatoriesList.slice(0, 3)
+  const overflowCount = signatoriesList.length > 3 ? signatoriesList.length - 3 : 0
+  const overflowNames = signatoriesList.slice(3).map(s => s.name).join(', ')
+  const avatarColors = [
+    'bg-primary/10 text-primary border-primary/20',
+    'bg-indigo-500/10 text-indigo-700 border-indigo-200',
+    'bg-amber-500/10 text-amber-700 border-amber-200',
+    'bg-emerald-500/10 text-emerald-700 border-emerald-200'
+  ]
+
   const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number } | null>(null)
   const [containerWidth, setContainerWidth] = useState<number>(0)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -281,16 +327,33 @@ export default function DocumentComplete() {
                   Signatories
                 </span>
                 <div className="flex -space-x-1.5">
-                  <div className="w-7 h-7 rounded-full bg-primary/10 border-2 border-white flex items-center justify-center text-[9px] font-bold text-primary">IK</div>
-                  <div className="w-7 h-7 rounded-full bg-indigo-500/10 border-2 border-white flex items-center justify-center text-[9px] font-bold text-indigo-700">JH</div>
-                  <div className="w-7 h-7 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[9px] font-bold text-slate-700">RT</div>
-                  <div className="w-7 h-7 rounded-full bg-primary-container border-2 border-white flex items-center justify-center text-[9px] font-bold text-on-primary-container">+1</div>
+                  {displaySignatories.map((sig, idx) => (
+                    <div
+                      key={sig.id}
+                      title={`${sig.name} (${sig.signed ? 'Signed' : 'Pending'})`}
+                      className={`w-7 h-7 rounded-full border-2 border-white flex items-center justify-center text-[9px] font-bold ${
+                        avatarColors[idx % avatarColors.length]
+                      }`}
+                    >
+                      {sig.initials}
+                    </div>
+                  ))}
+                  {overflowCount > 0 && (
+                    <div
+                      title={overflowNames}
+                      className="w-7 h-7 rounded-full bg-primary-container border-2 border-white flex items-center justify-center text-[9px] font-bold text-on-primary-container cursor-help"
+                    >
+                      +{overflowCount}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="flex items-center gap-1 px-2.5 py-1 bg-primary/10 rounded-full border border-primary/20">
                 <Shield size={10} className="text-primary" />
-                <span className="text-[10px] font-bold text-primary">Signed by 4 of 4</span>
+                <span className="text-[10px] font-bold text-primary">
+                  Signed by {doc?.status === 'locked' ? totalSignatories : signedCount} of {totalSignatories}
+                </span>
               </div>
             </div>
           </div>

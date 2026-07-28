@@ -5,7 +5,66 @@ import AppLayout from '../components/AppLayout'
 import { useApp } from '../context/AppContext'
 import type { Document } from '../types'
 
+export function getSignatoryBannerText(doc: Document, currentUserId?: string): string {
+  const recipients = doc.recipients || []
+  if (recipients.length === 0) return 'Signing workflow active.'
+
+  // 1. Group recipients by order integer
+  const orderMap = new Map<number, typeof recipients>()
+  for (const r of recipients) {
+    const orderVal = r.order || 1
+    if (!orderMap.has(orderVal)) {
+      orderMap.set(orderVal, [])
+    }
+    orderMap.get(orderVal)!.push(r)
+  }
+
+  const sortedOrders = Array.from(orderMap.keys()).sort((a, b) => a - b)
+  
+  // 2. Identify current user's order group
+  const myRecipient = recipients.find(r => r.id === currentUserId)
+  const myOrder = myRecipient?.order || sortedOrders[0] || 1
+  const myGroup = orderMap.get(myOrder) || []
+  const isMyGroupParallel = myGroup.length > 1
+
+  // 3. Identify next order group
+  const nextOrder = sortedOrders.find(o => o > myOrder)
+  const nextGroup = nextOrder ? orderMap.get(nextOrder) : undefined
+
+  // 4. Construct message for Final Step vs. Next Step
+  if (!nextGroup || nextGroup.length === 0) {
+    if (isMyGroupParallel) {
+      return `You are in Step #${myOrder} (${myGroup.length} parallel signatories). All Step #${myOrder} signatures will complete this document.`
+    }
+    return `You are the final signatory. Signing will complete this document.`
+  }
+
+  // Format label for the next order group
+  let nextLabel = ''
+  if (nextGroup.length === 1) {
+    const r = nextGroup[0]
+    const roleTitle = r.accessRole === 'manager' ? 'Manager' : r.accessRole === 'supervisor' ? 'Supervisor' : 'Staff'
+    nextLabel = r.name || roleTitle
+  } else {
+    const firstRole = nextGroup[0].accessRole
+    const sameRole = nextGroup.every(r => r.accessRole === firstRole)
+    if (sameRole) {
+      const roleTitle = firstRole === 'manager' ? 'Managers' : firstRole === 'supervisor' ? 'Supervisors' : 'Staff members'
+      nextLabel = `${nextGroup.length} ${roleTitle}`
+    } else {
+      nextLabel = `${nextGroup.length} signatories (Step #${nextOrder})`
+    }
+  }
+
+  if (isMyGroupParallel) {
+    return `You are in Step #${myOrder} (${myGroup.length} parallel signatories). ${nextLabel} is locked until all Step #${myOrder} signatories sign.`
+  }
+
+  return `You are Signatory #${myOrder}. ${nextLabel} is locked until you sign.`
+}
+
 function DocCard({ doc }: { doc: Document }) {
+  const { currentUser } = useApp()
   const navigate = useNavigate()
   return (
     <div className="glass-card p-5 hover:border-primary/40 transition-colors animate-slide-up">
@@ -28,24 +87,18 @@ function DocCard({ doc }: { doc: Document }) {
 
       <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10 text-xs text-on-surface-variant">
         <AlertCircle size={12} className="text-primary flex-shrink-0" />
-        You are Signatory #1. Manager is locked until you sign.
+        {getSignatoryBannerText(doc, currentUser?.id)}
       </div>
 
       <div className="flex gap-2">
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
-          className="btn-ghost text-xs flex-1 justify-center"
-        >
-          <Eye size={13} /> Review
-        </button>
-        <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
           className="btn-secondary text-xs flex-1 justify-center text-error border-error/30 hover:bg-error/5"
         >
           <XCircle size={13} /> Reject
         </button>
         <button
-          onClick={() => navigate(`/documents/${doc.id}/editor`)}
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
           className="btn-primary text-xs flex-1 justify-center"
         >
           <PenSquare size={13} /> Sign Now
@@ -56,12 +109,28 @@ function DocCard({ doc }: { doc: Document }) {
 }
 
 export default function SupervisorDashboard() {
-  const { documents } = useApp()
+  const { documents, currentUser } = useApp()
   const navigate = useNavigate()
 
-  const pendingDocs = documents.filter(d => d.status === 'pending_supervisor')
+  const isMyTurnToSign = (doc: Document) => {
+    if (!doc.status.startsWith('pending_')) return false;
+    const sortedSigs = doc.recipients || [];
+    if (sortedSigs.length === 0) return false;
+
+    const activeOrder = sortedSigs.find(s => {
+      const sMarkers = (doc.markers || []).filter(m => m.assignedTo.id === s.id);
+      return sMarkers.length > 0 && sMarkers.some(m => !m.signed);
+    })?.order || sortedSigs[0]?.order;
+
+    const activeGroupUserIds = sortedSigs.filter(s => s.order === activeOrder).map(s => s.id);
+    const userHasUnsignedMarker = (doc.markers || []).some(m => m.assignedTo.id === currentUser?.id && !m.signed);
+
+    return activeGroupUserIds.includes(currentUser?.id || '') && userHasUnsignedMarker;
+  }
+
+  const pendingDocs = documents.filter(d => isMyTurnToSign(d))
   const signedByMe = documents.filter(d =>
-    d.status === 'pending_manager' || d.status === 'locked' || d.status === 'signed'
+    (d.markers || []).some(m => m.assignedTo.id === currentUser?.id && m.signed)
   )
 
   return (
@@ -72,9 +141,9 @@ export default function SupervisorDashboard() {
         <div>
           <h1 className="section-title text-2xl flex items-center gap-2">
             <PenSquare className="text-primary" />
-            Supervisor Sign Queue
+            Sign Queue
           </h1>
-          <p className="section-subtitle mt-0.5">Documents awaiting your signature as first approver</p>
+          <p className="section-subtitle mt-0.5">Documents awaiting your signature</p>
         </div>
 
         {/* Stats Row */}

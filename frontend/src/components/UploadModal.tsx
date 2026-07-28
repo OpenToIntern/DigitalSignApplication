@@ -128,7 +128,7 @@ export default function UploadModal({ onUpload, onClose }: UploadModalProps) {
         {/* Info note */}
         <div className="flex items-start gap-2 mt-4 px-3 py-2.5 rounded-lg bg-primary/5 border border-primary/10 text-primary text-xs font-medium">
           <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
-          A SHA-256 baseline hash will be computed from the original document upon upload per FR-010.
+          A SHA-256 baseline hash will be computed from the original document upon upload.
         </div>
 
         {/* Actions */}

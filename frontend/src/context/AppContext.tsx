@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { User, Document, AppState } from '../types'
 
@@ -40,6 +40,9 @@ interface AppContextValue extends AppState {
   addDocument: (doc: Document) => void;
   updateDocument: (id: string, updates: Partial<Document>) => Promise<Document | undefined>;
   logout: () => void;
+  // Exposes the most recent failed updateDocument error so callers can surface it
+  lastUpdateError: string | null;
+  clearLastUpdateError: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -102,13 +105,85 @@ function mapApiDocToFrontendDoc(doc: any): Document {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [mfaVerified, setMfaVerified] = useState(false)
-  const [dukcapilVerified, setDukcapilVerified] = useState(false)
-  const [token, setToken] = useState<string | null>(null)
+  // Initialize state from localStorage so page refreshes/HMR don't wipe active sessions
+  const savedToken = localStorage.getItem('signhere_token')
+  const savedUserRaw = localStorage.getItem('signhere_user')
+  const initialUser = savedUserRaw ? JSON.parse(savedUserRaw) : null
+
+  const [currentUser, setCurrentUserState] = useState<User | null>(initialUser)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!(savedToken && initialUser))
+  const [mfaVerified, setMfaVerified] = useState<boolean>(!!(savedToken && initialUser))
+  const [dukcapilVerified, setDukcapilVerified] = useState<boolean>(!!(savedToken && initialUser))
+  const [token, setTokenState] = useState<string | null>(savedToken)
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
+  const [lastUpdateError, setLastUpdateError] = useState<string | null>(null)
+  const clearLastUpdateError = () => setLastUpdateError(null)
+
+  const setToken = (t: string | null) => {
+    if (t) {
+      localStorage.setItem('signhere_token', t)
+    } else {
+      localStorage.removeItem('signhere_token')
+    }
+    setTokenState(t)
+  }
+
+  const setCurrentUser = (u: User | null) => {
+    if (u) {
+      localStorage.setItem('signhere_user', JSON.stringify(u))
+    } else {
+      localStorage.removeItem('signhere_user')
+    }
+    setCurrentUserState(u)
+  }
+
+  const logout = () => {
+    localStorage.removeItem('signhere_token')
+    localStorage.removeItem('signhere_user')
+    setTokenState(null)
+    setCurrentUserState(null)
+    setIsAuthenticated(false)
+    setMfaVerified(false)
+    setDukcapilVerified(false)
+  }
+
+  // Throttled token refresh on active user interactions (click/keydown) — max once per 5 min
+  const lastRefreshRef = useRef<number>(Date.now())
+  useEffect(() => {
+    if (!isAuthenticated || !token) return
+
+    const handleUserActivity = async () => {
+      const now = Date.now()
+      // Only refresh if at least 5 minutes (300,000 ms) have passed since last refresh
+      if (now - lastRefreshRef.current < 300000) return
+      lastRefreshRef.current = now
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        if (res.status === 401 || res.status === 403) {
+          logout()
+          return
+        }
+        if (res.ok) {
+          const data = await res.json()
+          setToken(data.token)
+        }
+      } catch (err) {
+        console.error('Error refreshing sliding session JWT:', err)
+      }
+    }
+
+    window.addEventListener('click', handleUserActivity)
+    window.addEventListener('keydown', handleUserActivity)
+    return () => {
+      window.removeEventListener('click', handleUserActivity)
+      window.removeEventListener('keydown', handleUserActivity)
+    }
+  }, [isAuthenticated, token])
 
   // Fetch documents from backend API
   const refreshDocuments = async () => {
@@ -148,11 +223,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // App-wide user profile sync: polls /users/profile to keep currentUser.accessRole in sync
+  const refreshUserProfile = async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/profile`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) logout()
+        return
+      }
+      const data = await res.json()
+      const updatedUser = normalizeUser(data)
+      setCurrentUser(updatedUser)
+    } catch (err) {
+      console.error('Error refreshing user profile in background:', err)
+    }
+  }
+
   useEffect(() => {
     if (isAuthenticated && token) {
       refreshDocuments()
+      refreshUserProfile()
       // Poll every 30 seconds (same cadence as notification polling in AppLayout)
-      const interval = setInterval(silentRefreshDocuments, 30000)
+      const interval = setInterval(() => {
+        silentRefreshDocuments()
+        refreshUserProfile()
+      }, 30000)
       return () => clearInterval(interval)
     }
   }, [isAuthenticated, token])
@@ -219,27 +319,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(payload)
       })
 
-      if (!res.ok) throw new Error('Failed to update document on backend')
+      if (!res.ok) {
+        // Extract real backend error message so callers can surface it
+        let backendMsg = `Server error (${res.status})`
+        try {
+          const errJson = await res.json()
+          if (errJson?.error) backendMsg = errJson.error
+        } catch { /* ignore json parse failure */ }
+        setLastUpdateError(backendMsg)
+        throw new Error(backendMsg)
+      }
+
       const updatedDocRaw = await res.json()
       const updatedDoc = mapApiDocToFrontendDoc(updatedDocRaw)
 
+      setLastUpdateError(null)
       setDocuments(prev => prev.map(d => d.id === id ? updatedDoc : d))
       return updatedDoc
-    } catch (error) {
-      console.error('Error updating document on backend:', error)
-      // Fallback local update if backend fails
-      const fallbackDoc = { ...documents.find(d => d.id === id), ...updates } as Document
-      setDocuments(prev => prev.map(d => d.id === id ? fallbackDoc : d))
-      return fallbackDoc
+    } catch (error: any) {
+      console.error('Error updating document on backend:', error.message || error)
+      // Do NOT apply failed updates locally — keep last known-good server state.
+      // lastUpdateError is already set above if it was a backend HTTP error.
+      // Re-throw so calling code can show a UI error.
+      throw error
     }
-  }
-
-  const logout = () => {
-    setToken(null)
-    setCurrentUser(null)
-    setIsAuthenticated(false)
-    setMfaVerified(false)
-    setDukcapilVerified(false)
   }
 
   return (
@@ -260,6 +363,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addDocument,
       updateDocument,
       logout,
+      lastUpdateError,
+      clearLastUpdateError,
     }}>
       {children}
     </AppContext.Provider>
