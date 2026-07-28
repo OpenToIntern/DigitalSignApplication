@@ -113,14 +113,12 @@ export default function DocumentsPage() {
               Search, filter, and track all documents in the system.
             </p>
           </div>
-          {currentUser?.accessRole === 'user' && (
-            <button
-              onClick={() => setShowUpload(true)}
-              className="btn-primary self-start sm:self-auto"
-            >
-              <Plus size={16} /> New Document
-            </button>
-          )}
+          <button
+            onClick={() => setShowUpload(true)}
+            className="btn-primary self-start sm:self-auto"
+          >
+            <Plus size={16} /> New Document
+          </button>
         </div>
 
         {/* Filter Toolbar */}
@@ -247,7 +245,7 @@ export default function DocumentsPage() {
                           }}
                           className="btn-ghost text-xs py-1 px-2.5"
                         >
-                          <Eye size={13} /> {doc.status === 'draft' && currentUser?.accessRole === 'user' ? 'Edit' : 'View'}
+                          <Eye size={13} /> {(doc.status === 'draft' || doc.status === 'rejected') && currentUser?.id === doc.sender?.id ? 'Edit' : 'View'}
                         </button>
                       </td>
                     </tr>

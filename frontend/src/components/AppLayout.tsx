@@ -16,15 +16,17 @@ interface NavItem {
   roles?: Array<'user' | 'supervisor' | 'manager'>
 }
 
-const navItems: NavItem[] = [
-  { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard', roles: ['user'] },
-  { to: '/supervisor', icon: <PenSquare size={18} />, label: 'Sign Queue', roles: ['supervisor'] },
-  { to: '/manager', icon: <Lock size={18} />, label: 'Sign Queue', roles: ['manager'] },
-  { to: '/documents', icon: <FileText size={18} />, label: 'Documents' },
-  { to: '/verify', icon: <ShieldCheck size={18} />, label: 'Verify' },
-  { to: '/audit', icon: <ClipboardList size={18} />, label: 'Audit Log' },
-  { to: '/settings', icon: <Settings size={18} />, label: 'Settings' },
-]
+const getNavItems = (role?: string): NavItem[] => {
+  const queuePath = role === 'manager' ? '/manager' : role === 'supervisor' ? '/supervisor' : '/queue';
+  return [
+    { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard' },
+    { to: queuePath, icon: <PenSquare size={18} />, label: 'Sign Queue' },
+    { to: '/documents', icon: <FileText size={18} />, label: 'Documents' },
+    { to: '/verify', icon: <ShieldCheck size={18} />, label: 'Verify' },
+    { to: '/audit', icon: <ClipboardList size={18} />, label: 'Audit Log' },
+    { to: '/settings', icon: <Settings size={18} />, label: 'Settings' },
+  ];
+};
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -98,6 +100,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const handleMarkAllRead = async () => {
+    if (!token) return
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/notifications/read-all`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err)
+    }
+  }
+
   const formatRelativeTime = (dateStr: string) => {
     const date = new Date(dateStr)
     if (isNaN(date.getTime())) return ''
@@ -123,10 +140,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     navigate('/')
   }
 
-  const filteredNav = navItems.filter(item => {
-    if (!item.roles) return true
-    return item.roles.includes(currentUser?.accessRole as 'user' | 'supervisor' | 'manager')
-  })
+  const filteredNav = getNavItems(currentUser?.accessRole)
 
   // Editor sidebar is styled in a special minimized mode (as seen in screenshots: Document, Layers, History)
   const isEditorPage = location.pathname.includes('/editor')
@@ -315,9 +329,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <div className="px-4 py-2 flex items-center justify-between bg-surface-container-low/50">
                     <span className="font-semibold text-xs text-on-surface">Notifications</span>
                     {unreadCount > 0 && (
-                      <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-                        {unreadCount} unread
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleMarkAllRead}
+                          className="text-[10px] text-primary hover:underline font-medium"
+                        >
+                          Mark all as read
+                        </button>
+                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                          {unreadCount} unread
+                        </span>
+                      </div>
                     )}
                   </div>
                   <div className="max-h-72 overflow-y-auto divide-y divide-outline-variant/20">
