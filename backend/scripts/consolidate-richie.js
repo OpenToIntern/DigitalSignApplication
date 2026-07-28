@@ -54,6 +54,16 @@ async function main() {
   // Case B: BOTH rows exist separately
   console.log('\n---> SCENARIO B: Both rows exist separately. Merging duplicate into u-001.');
 
+  // Capture email and passwordHash from duplicate row before deletion
+  const capturedEmail = duplicateUser.email;
+  const capturedPasswordHash = duplicateUser.passwordHash;
+
+  console.log('\nCredential Transfer Plan:');
+  console.log(` - Target Account ID:       ${targetIdSeed}`);
+  console.log(` - Current Email on u-001:  ${seededUser.email}`);
+  console.log(` - New Email on u-001:      ${capturedEmail}`);
+  console.log(` - Password Hash Transfer:  ${capturedPasswordHash ? 'Preserving actual user passwordHash from duplicate row' : 'No passwordHash found on duplicate'}`);
+
   // Count FK dependencies on duplicateUser
   const docsCount = await prisma.document.count({ where: { senderId: duplicateId } });
   const signatoriesCount = await prisma.documentSignatory.count({ where: { userId: duplicateId } });
@@ -70,12 +80,14 @@ async function main() {
 
   if (DRY_RUN) {
     console.log('\n[DRY-RUN PREVIEW]: The following atomic updates would be executed inside a Prisma transaction:');
-    console.log(` 1. UPDATE Document SET senderId = 'u-001' WHERE senderId = '${duplicateId}' (${docsCount} rows)`);
-    console.log(` 2. UPDATE DocumentSignatory SET userId = 'u-001' WHERE userId = '${duplicateId}' (${signatoriesCount} rows)`);
-    console.log(` 3. UPDATE Marker SET assignedToId = 'u-001' WHERE assignedToId = '${duplicateId}' (${markersCount} rows)`);
-    console.log(` 4. UPDATE AuditLog SET userId = 'u-001' WHERE userId = '${duplicateId}' (${auditLogsCount} rows)`);
-    console.log(` 5. UPDATE Notification SET userId = 'u-001' WHERE userId = '${duplicateId}' (${notificationsCount} rows)`);
-    console.log(` 6. DELETE User WHERE id = '${duplicateId}' (1 row)`);
+    console.log(` 1. Capture email ('${capturedEmail}') & passwordHash from duplicate row (${duplicateId}).`);
+    console.log(` 2. UPDATE Document SET senderId = 'u-001' WHERE senderId = '${duplicateId}' (${docsCount} rows)`);
+    console.log(` 3. UPDATE DocumentSignatory SET userId = 'u-001' WHERE userId = '${duplicateId}' (${signatoriesCount} rows)`);
+    console.log(` 4. UPDATE Marker SET assignedToId = 'u-001' WHERE assignedToId = '${duplicateId}' (${markersCount} rows)`);
+    console.log(` 5. UPDATE AuditLog SET userId = 'u-001' WHERE userId = '${duplicateId}' (${auditLogsCount} rows)`);
+    console.log(` 6. UPDATE Notification SET userId = 'u-001' WHERE userId = '${duplicateId}' (${notificationsCount} rows)`);
+    console.log(` 7. DELETE User WHERE id = '${duplicateId}' (1 row) -> Frees unique email constraint for '${capturedEmail}'.`);
+    console.log(` 8. UPDATE User SET email = '${capturedEmail}', passwordHash = [capturedHash] WHERE id = 'u-001'.`);
     console.log('\nNo changes made. To execute live, set EXECUTE_CONSOLIDATION=true node scripts/consolidate-richie.js');
     return;
   }
@@ -98,10 +110,8 @@ async function main() {
           where: { documentId_userId: { documentId: sig.documentId, userId: targetIdSeed } }
         });
         if (existingTargetSig) {
-          // If u-001 is already a signatory on the same document, safely remove duplicate signatory entry
           await tx.documentSignatory.delete({ where: { id: sig.id } });
         } else {
-          // Reassign to u-001
           await tx.documentSignatory.update({
             where: { id: sig.id },
             data: { userId: targetIdSeed }
@@ -134,14 +144,28 @@ async function main() {
       });
     }
 
-    // 6. Delete duplicate user row
+    // 6. Delete duplicate user row (Frees unique email constraint)
     await tx.user.delete({
       where: { id: duplicateId }
+    });
+
+    // 7. Update u-001 with captured email & passwordHash
+    await tx.user.update({
+      where: { id: targetIdSeed },
+      data: {
+        name: 'Richie Frederico Wong',
+        email: capturedEmail,
+        passwordHash: capturedPasswordHash,
+        nik: '3175010101990001',
+        nikVerified: true,
+        accessRole: 'user'
+      }
     });
   });
 
   console.log('\nLIVE EXECUTION COMPLETED SUCCESSFULLY!');
   console.log('All documents, signatories, markers, audit logs, and notifications have been reassigned to u-001.');
+  console.log(`Official u-001 account updated with email '${capturedEmail}' and actual passwordHash.`);
   console.log('Duplicate user account 883a8d0e-1c37-4621-91e1-1acfd07eb1ab has been safely removed.');
 }
 
