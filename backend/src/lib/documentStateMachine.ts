@@ -1,7 +1,10 @@
+const ALLOWED_PENDING = ['pending_user', 'pending_supervisor', 'pending_manager', 'locked', 'rejected'];
+
 export const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft: ['pending_supervisor', 'pending_manager'],
-  pending_supervisor: ['pending_supervisor', 'pending_manager', 'locked', 'rejected'],
-  pending_manager: ['pending_supervisor', 'pending_manager', 'locked', 'rejected'],
+  draft: ['pending_user', 'pending_supervisor', 'pending_manager'],
+  pending_user: ALLOWED_PENDING,
+  pending_supervisor: ALLOWED_PENDING,
+  pending_manager: ALLOWED_PENDING,
   rejected: ['draft'],
   locked: [],
 };
@@ -10,12 +13,13 @@ export interface StateMachineResult {
   valid: boolean;
   error?: string;
   httpStatus?: number;
+  computedNextStatus?: string;
 }
 
 /**
  * Validates a document status transition on the backend.
  * Enforces role check, assignment check, state transitions, signature verification,
- * and dynamic recipient order chain.
+ * and dynamic recipient order chain with parallel order group support.
  */
 export function validateTransition(
   currentStatus: string,
@@ -31,9 +35,9 @@ export function validateTransition(
     return { valid: true };
   }
 
-  // 1. Check if the status transition exists in the allowed transitions list
+  // 1. Check if the status transition exists in the allowed transitions list (if requestedStatus is provided)
   const allowed = VALID_TRANSITIONS[currentStatus];
-  if (!allowed || !allowed.includes(requestedStatus)) {
+  if (requestedStatus !== undefined && (!allowed || !allowed.includes(requestedStatus))) {
     return {
       valid: false,
       error: `Invalid transition: document cannot move from '${currentStatus}' to '${requestedStatus}'.`,
@@ -59,12 +63,11 @@ export function validateTransition(
   };
 
   // 2. Validate role authorization and assignment based on transition path
-  const transitionPath = `${currentStatus}->${requestedStatus}`;
+  let computedStatus: string | undefined = undefined;
 
-  switch (transitionPath) {
-    case 'draft->pending_supervisor':
-    case 'draft->pending_manager': {
-      // Must be document owner (senderId) — ANY role (staff, supervisor, manager) can create/initiate
+  switch (currentStatus) {
+    case 'draft': {
+      // Must be document owner (senderId)
       if (callerId !== document.senderId) {
         return {
           valid: false,
@@ -96,9 +99,11 @@ export function validateTransition(
       }
 
       // Verify requested initial status matches recipient #1's accessRole
-      const firstRole = sortedSignatories[0].user?.accessRole || userMap?.get(sortedSignatories[0].userId)?.accessRole || 'supervisor';
+      const firstRole = sortedSignatories[0].user?.accessRole || userMap?.get(sortedSignatories[0].userId)?.accessRole || 'user';
       const expectedInitialStatus = `pending_${firstRole}`;
-      if (requestedStatus !== expectedInitialStatus) {
+      computedStatus = expectedInitialStatus;
+
+      if (requestedStatus && requestedStatus !== expectedInitialStatus) {
         return {
           valid: false,
           error: `Invalid transition target: Expected initial status '${expectedInitialStatus}' for recipient #1 (role '${firstRole}'), got '${requestedStatus}'.`,
@@ -108,7 +113,7 @@ export function validateTransition(
       break;
     }
 
-    case 'rejected->draft': {
+    case 'rejected': {
       // Must be document owner (senderId)
       if (callerId !== document.senderId) {
         return {
@@ -116,6 +121,14 @@ export function validateTransition(
           error: 'Forbidden: Only the document owner (initiator) can resubmit it for review.',
           httpStatus: 403,
         };
+      }
+      
+      if (requestedStatus === 'draft') {
+        computedStatus = 'draft';
+      } else {
+        const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
+        const firstRole = sortedSignatories[0]?.user?.accessRole || userMap?.get(sortedSignatories[0]?.userId)?.accessRole || 'user';
+        computedStatus = `pending_${firstRole}`;
       }
       break;
     }
@@ -125,43 +138,57 @@ export function validateTransition(
         const sortedSignatories = [...(document.signatories || [])].sort((a: any, b: any) => a.order - b.order);
         const resolvedMarkers = resolveMarkers(document.markers, incomingMarkers);
 
-        // 1. Identify current active signatory expecting signature before incoming markers are applied
-        const currentActiveSignatory = sortedSignatories.find((sig: any) => {
+        // 1. Find current active order group
+        const activeOrder = sortedSignatories.find((sig: any) => {
+          const sigUserId = sig.userId || sig.user?.id;
           const sigMarkers = (document.markers || []).filter(
-            (m: any) => (m.assignedToId || m.assignedTo?.id) === sig.userId
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
           );
           return sigMarkers.length > 0 && sigMarkers.some((m: any) => !m.signed);
-        }) || sortedSignatories[sortedSignatories.length - 1];
+        })?.order || (sortedSignatories[0]?.order ?? 1);
 
-        // 2. Validate caller identity
-        const activeUserId = currentActiveSignatory?.userId || currentActiveSignatory?.user?.id;
-        if (activeUserId && callerId !== activeUserId) {
+        // 2. Identify all signatories belonging to the active order group
+        const activeGroupSignatories = sortedSignatories.filter((sig: any) => sig.order === activeOrder);
+        const activeGroupUserIds = activeGroupSignatories.map((sig: any) => sig.userId || sig.user?.id);
+
+        // 3. Validate caller identity
+        const isCallerInActiveGroup = activeGroupUserIds.includes(callerId);
+        const callerHasUnsignedMarker = (document.markers || []).some((m: any) => {
+          const mUserId = m.assignedToId || m.assignedTo?.id;
+          return mUserId === callerId && !m.signed;
+        });
+
+        if (!isCallerInActiveGroup || !callerHasUnsignedMarker) {
           return {
             valid: false,
-            error: `Forbidden: It is not your turn to sign this document. Awaiting signature from recipient #${currentActiveSignatory?.order}.`,
+            error: `Forbidden: It is not your turn to sign this document. Awaiting signature(s) for step group #${activeOrder}.`,
             httpStatus: 403,
           };
         }
 
-        // 3. Handle Rejection (allowed if caller is the current active signatory)
+        // 4. Handle Rejection
         if (requestedStatus === 'rejected') {
+          computedStatus = 'rejected';
           break;
         }
 
-        // 4. Compute expected next status AFTER applying incoming signatures
+        // 5. Compute expected next status
         const nextUnsignedSignatory = sortedSignatories.find((sig: any) => {
+          const sigUserId = sig.userId || sig.user?.id;
           const sigMarkers = resolvedMarkers.filter(
-            (m: any) => (m.assignedToId || m.assignedTo?.id) === sig.userId
+            (m: any) => (m.assignedToId || m.assignedTo?.id) === sigUserId
           );
           return sigMarkers.some((m: any) => !m.signed);
         });
 
         const expectedNextStatus = nextUnsignedSignatory
-          ? `pending_${nextUnsignedSignatory.user?.accessRole || userMap?.get(nextUnsignedSignatory.userId)?.accessRole || 'supervisor'}`
+          ? `pending_${nextUnsignedSignatory.user?.accessRole || userMap?.get(nextUnsignedSignatory.userId)?.accessRole || 'user'}`
           : 'locked';
 
-        // 5. Enforce exact match between caller's requested target and server-computed target
-        if (requestedStatus !== expectedNextStatus) {
+        computedStatus = expectedNextStatus;
+
+        // 6. Enforce exact match if requested
+        if (requestedStatus && requestedStatus !== expectedNextStatus) {
           return {
             valid: false,
             error: `Invalid transition target: Requested status '${requestedStatus}' does not match expected next status '${expectedNextStatus}'.`,
@@ -169,7 +196,7 @@ export function validateTransition(
           };
         }
 
-        // 6. If locking, ensure every signature marker across all recipients is signed
+        // 7. If locking, ensure every signature marker is signed
         if (expectedNextStatus === 'locked') {
           const allSigned = resolvedMarkers.length > 0 && resolvedMarkers.every((m: any) => m.signed);
           if (!allSigned) {
@@ -185,20 +212,19 @@ export function validateTransition(
 
       return {
         valid: false,
-        error: `System Error: Transition rules for path '${transitionPath}' are not defined.`,
+        error: `System Error: Transition rules for current state '${currentStatus}' are not defined.`,
         httpStatus: 500,
       };
     }
   }
 
-  return { valid: true };
+  return { valid: true, computedNextStatus: computedStatus };
 }
 
 /**
  * Validates that:
  * 1. At least one signature marker exists.
  * 2. Each recipient has at least one marker specifically assigned to them.
- * 3. The initiator (senderId/senderEmail) is NOT included as a recipient.
  */
 export function validateMarkersAndRecipients(
   markers: any[],
@@ -219,24 +245,6 @@ export function validateMarkersAndRecipients(
       valid: false,
       error: 'Cannot send invitations: The document has no recipients.',
     };
-  }
-
-  // Prevent initiator from being added as a recipient/signatory
-  if (senderId || senderEmail) {
-    const isSelfIncluded = recipients.some((r: any) => {
-      const rId = r.id || r.userId;
-      const rEmail = String(r.email || '').trim().toLowerCase();
-      if (senderId && rId === senderId) return true;
-      if (senderEmail && rEmail && rEmail === String(senderEmail).trim().toLowerCase()) return true;
-      return false;
-    });
-
-    if (isSelfIncluded) {
-      return {
-        valid: false,
-        error: 'Cannot send invitations: Initiator (document creator) cannot be added as a recipient or signatory on their own document.',
-      };
-    }
   }
 
   const recipientEmails = recipients.map((r: any) => String(r.email || '').trim().toLowerCase());

@@ -15,6 +15,22 @@ const BASE_PDF_SCALE = 1.2
 const MIN_MARKER_WIDTH = 80
 const MIN_MARKER_HEIGHT = 30
 
+function checkIsMyTurnToSign(doc?: Document, userId?: string): boolean {
+  if (!userId || !doc || !doc.status || !doc.status.startsWith('pending_')) return false;
+  const sortedSigs = doc.recipients || [];
+  if (sortedSigs.length === 0) return false;
+
+  const activeOrder = sortedSigs.find(s => {
+    const sMarkers = (doc.markers || []).filter(m => m.assignedTo.id === s.id);
+    return sMarkers.length > 0 && sMarkers.some(m => !m.signed);
+  })?.order || sortedSigs[0]?.order;
+
+  const activeGroupUserIds = sortedSigs.filter(s => s.order === activeOrder).map(s => s.id);
+  const userHasUnsignedMarker = (doc.markers || []).some(m => m.assignedTo.id === userId && !m.signed);
+
+  return activeGroupUserIds.includes(userId) && userHasUnsignedMarker;
+}
+
 export default function DocumentEditor() {
   const { id } = useParams<{ id: string }>()
   const { documents, updateDocument, currentUser, token } = useApp()
@@ -60,7 +76,7 @@ export default function DocumentEditor() {
         const data = await res.json()
         const filtered = data
           .map(normalizeUser)
-          .filter((u: User) => u.accessRole === 'supervisor' || u.accessRole === 'manager')
+          .filter((u: User) => u.email)
         setAllReviewers(filtered)
       } catch (err) {
         console.error('Failed to load reviewers:', err)
@@ -298,25 +314,25 @@ export default function DocumentEditor() {
     }
   }
 
+  const [loadedDocId, setLoadedDocId] = useState<string | null>(null)
+
   useEffect(() => {
-    if (doc) {
+    if (doc && doc.id !== loadedDocId) {
+      setLoadedDocId(doc.id)
       const nextMarkers = doc.markers || []
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
       
       const nextSignatories = doc.recipients?.length ? doc.recipients : []
       setSignatories(nextSignatories)
-      
-      if (allReviewers.length > 0) {
-        setAssignedUser(current => {
-          if (current && allReviewers.some(user => user.id === current.id || user.email === current.email)) {
-            return current
-          }
-          return allReviewers[0]
-        })
-      }
     }
-  }, [doc, allReviewers])
+  }, [doc, loadedDocId])
+
+  useEffect(() => {
+    if (allReviewers.length > 0 && !assignedUser) {
+      setAssignedUser(allReviewers[0])
+    }
+  }, [allReviewers, assignedUser])
 
   if (!doc) {
     return (
@@ -336,12 +352,10 @@ export default function DocumentEditor() {
   const isSupervisor = currentUser?.accessRole === 'supervisor'
   const isManager = currentUser?.accessRole === 'manager'
 
-  const isMyTurnToSign = (isSupervisor && doc.status === 'pending_supervisor') || (isManager && doc.status === 'pending_manager')
-  const canReject = isMyTurnToSign
+  const myTurnToSign = !isReviewMode && checkIsMyTurnToSign(doc, currentUser?.id)
+  const canReject = myTurnToSign
 
   const canPlaceMarkers = isOwner && (doc.status === 'draft' || doc.status === 'rejected') && !isReviewMode
-  const canSupervisorSign = !isReviewMode && isSupervisor && doc.status === 'pending_supervisor'
-  const canManagerSign = !isReviewMode && isManager && doc.status === 'pending_manager'
   const canMoveMarker = (marker: Marker) => {
     return canPlaceMarkers
   }
@@ -375,15 +389,12 @@ export default function DocumentEditor() {
       return
     }
 
+    if (isReviewMode) return
     const isAssigned = marker.assignedTo.id === currentUser?.id
-    const isSupervisorTurn = canSupervisorSign && marker.assignedTo.accessRole === 'supervisor'
-    const isManagerTurn = canManagerSign && marker.assignedTo.accessRole === 'manager'
 
-    if (isAssigned && !marker.signed) {
-      if (isSupervisorTurn || isManagerTurn) {
-        setActiveMarkerToSign(marker)
-        setShowSign(true)
-      }
+    if (isAssigned && !marker.signed && myTurnToSign) {
+      setActiveMarkerToSign(marker)
+      setShowSign(true)
     }
   }
 
@@ -418,26 +429,17 @@ export default function DocumentEditor() {
     markersRef.current = updatedMarkers
     setShowSign(false)
 
-    let nextStatus = doc.status
-    if (isSupervisor) {
-      nextStatus = 'pending_manager'
-    } else if (isManager) {
-      nextStatus = 'locked'
-    }
-
     try {
-      await updateDocument(doc.id, {
+      const updatedDoc = await updateDocument(doc.id, {
         markers: updatedMarkers,
-        status: nextStatus,
         updatedAt: now,
       })
+      if (updatedDoc?.status === 'locked') {
+        navigate('/complete', { state: { documentName: doc.name, docId: doc.id } })
+      }
     } catch (err: any) {
       showActionError(err.message || 'Failed to submit signature. Please try again.')
       return
-    }
-
-    if (nextStatus === 'locked') {
-      navigate('/complete', { state: { documentName: doc.name, docId: doc.id } })
     }
   }
 
@@ -680,7 +682,7 @@ export default function DocumentEditor() {
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-300">
               <Eye size={12} /> Read-Only Preview / Review Mode
             </span>
-          ) : isMyTurnToSign ? (
+          ) : myTurnToSign ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300">
               <PenSquare size={12} /> Active Signature Required
             </span>
@@ -698,7 +700,7 @@ export default function DocumentEditor() {
               <XCircle size={14} /> Reject Document
             </button>
           )}
-          {isReviewMode && isMyTurnToSign && (
+          {isReviewMode && myTurnToSign && (
             <button
               onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
               className="btn-primary py-2 px-4 text-xs font-bold gap-1"
@@ -792,9 +794,7 @@ export default function DocumentEditor() {
               {/* Render Dragged / Placed Node Markers */}
               {markers.filter(m => m.page === activePage).map(marker => {
                  const isAssignedToCurrent = marker.assignedTo.id === currentUser?.id
-                 const isClickable = isAssignedToCurrent && !marker.signed &&
-                   ((canSupervisorSign && marker.assignedTo.accessRole === 'supervisor') ||
-                    (canManagerSign && marker.assignedTo.accessRole === 'manager'))
+                 const isClickable = isAssignedToCurrent && !marker.signed && myTurnToSign
 
                 const scaleFactor = getScaleFactor()
                 const visualX = Math.round(marker.x * scaleFactor)
@@ -974,7 +974,7 @@ export default function DocumentEditor() {
                   >
                     {allReviewers.map((user, index) => (
                       <option key={`${user.id}-${user.email}`} value={user.id}>
-                        {index + 1}. {user.name} ({user.accessRole === 'manager' ? 'Manager' : 'Supervisor'})
+                        {index + 1}. {user.name} ({user.accessRole === 'manager' ? 'Manager' : user.accessRole === 'supervisor' ? 'Supervisor' : 'Staff'})
                       </option>
                     ))}
                   </select>

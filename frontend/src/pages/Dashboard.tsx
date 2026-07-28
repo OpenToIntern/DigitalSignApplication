@@ -11,19 +11,19 @@ import type { Document } from '../types'
 
 function StatusBadge({ status }: { status: Document['status'] }) {
   const map: Record<Document['status'], React.ReactNode> = {
-    draft:             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>,
-    pending_supervisor:<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending Supervisor</span>,
-    pending_manager:   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Pending Manager</span>,
-    signed:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Signed</span>,
-    locked:            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">Completed</span>,
-    rejected:          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-800 border border-red-200">Rejected</span>,
+    draft: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>,
+    pending_supervisor: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">Pending Supervisor</span>,
+    pending_manager: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">Pending Manager</span>,
+    signed: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Signed</span>,
+    locked: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">Completed</span>,
+    rejected: <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-800 border border-red-200">Rejected</span>,
   }
   return <>{map[status]}</>
 }
 
 function getSigningProgress(doc: Document) {
   const signatureMarkers = doc.markers ? doc.markers.filter(m => m.type === 'signature') : []
-  
+
   if (signatureMarkers.length > 0) {
     const totalUsers = Array.from(new Set(signatureMarkers.map(m => m.assignedTo.id)))
     const signedUsers = totalUsers.filter(userId => {
@@ -52,6 +52,11 @@ function getSigningProgress(doc: Document) {
   return { signed: 0, total: 0 }
 }
 
+function checkIsMyTurnToSign(doc: Document, userId?: string): boolean {
+  if (!userId || !doc || !doc.status || !doc.status.startsWith('pending_')) return false;
+  return (doc.markers || []).some(m => m.assignedTo?.id === userId && !m.signed);
+}
+
 export default function Dashboard() {
   const { documents, currentUser, addDocument, refreshDocuments, token } = useApp()
   const [showUpload, setShowUpload] = useState(false)
@@ -63,16 +68,15 @@ export default function Dashboard() {
   const filteredDocs = myDocs.filter(d => {
     if (activeTab === 'all') return true
     if (activeTab === 'signed') return d.status === 'locked' || d.status === 'signed'
-    if (activeTab === 'pending') return d.status === 'pending_supervisor' || d.status === 'pending_manager'
+    if (activeTab === 'pending') return d.status.startsWith('pending_')
     return true
   })
 
   // Compute real stats from actual documents
   const totalDocs = myDocs.length
 
-  const pendingCount = myDocs.filter(
-    d => d.status === 'pending_supervisor' || d.status === 'pending_manager'
-  ).length
+  const docsAwaitingMySignature = documents.filter(d => checkIsMyTurnToSign(d, currentUser?.id))
+  const pendingCount = docsAwaitingMySignature.length
 
   const now = new Date()
   const currentMonth = now.getMonth()
@@ -142,7 +146,7 @@ export default function Dashboard() {
   return (
     <AppLayout>
       <div className="page-container max-w-6xl mx-auto space-y-6">
-        
+
         {/* Welcome Section */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
@@ -150,7 +154,9 @@ export default function Dashboard() {
               Welcome back, {currentUser?.name.split(' ')[0]}
             </h1>
             <p className="text-on-surface-variant text-xs mt-0.5">
-              You have {myDocs.filter(d => d.status.startsWith('pending')).length} documents awaiting your signature today.
+              {pendingCount === 0
+                ? 'You have no documents awaiting signature.'
+                : `You have ${pendingCount} document${pendingCount > 1 ? 's' : ''} awaiting signature.`}
             </p>
           </div>
           <button

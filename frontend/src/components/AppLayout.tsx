@@ -16,15 +16,17 @@ interface NavItem {
   roles?: Array<'user' | 'supervisor' | 'manager'>
 }
 
-const navItems: NavItem[] = [
-  { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard', roles: ['user'] },
-  { to: '/supervisor', icon: <PenSquare size={18} />, label: 'Sign Queue', roles: ['supervisor'] },
-  { to: '/manager', icon: <Lock size={18} />, label: 'Sign Queue', roles: ['manager'] },
-  { to: '/documents', icon: <FileText size={18} />, label: 'Documents' },
-  { to: '/verify', icon: <ShieldCheck size={18} />, label: 'Verify' },
-  { to: '/audit', icon: <ClipboardList size={18} />, label: 'Audit Log' },
-  { to: '/settings', icon: <Settings size={18} />, label: 'Settings' },
-]
+const getNavItems = (role?: string): NavItem[] => {
+  const queuePath = role === 'manager' ? '/manager' : role === 'supervisor' ? '/supervisor' : '/queue';
+  return [
+    { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard' },
+    { to: queuePath, icon: <PenSquare size={18} />, label: 'Sign Queue' },
+    { to: '/documents', icon: <FileText size={18} />, label: 'Documents' },
+    { to: '/verify', icon: <ShieldCheck size={18} />, label: 'Verify' },
+    { to: '/audit', icon: <ClipboardList size={18} />, label: 'Audit Log' },
+    { to: '/settings', icon: <Settings size={18} />, label: 'Settings' },
+  ];
+};
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -138,10 +140,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     navigate('/')
   }
 
-  const filteredNav = navItems.filter(item => {
-    if (!item.roles) return true
-    return item.roles.includes(currentUser?.accessRole as 'user' | 'supervisor' | 'manager')
-  })
+  const filteredNav = getNavItems(currentUser?.accessRole)
 
   // Editor sidebar is styled in a special minimized mode (as seen in screenshots: Document, Layers, History)
   const isEditorPage = location.pathname.includes('/editor')

@@ -1,9 +1,11 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenSquare, Clock, CheckCircle, FileText, Eye, AlertCircle, Lock } from 'lucide-react'
+import { PenSquare, Clock, CheckCircle, FileText, Eye, AlertCircle, Lock, XCircle } from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import { useApp } from '../context/AppContext'
 import type { Document } from '../types'
+
+import { getSignatoryBannerText } from './SupervisorDashboard'
 
 function ManagerDocCard({
   doc,
@@ -12,6 +14,7 @@ function ManagerDocCard({
   doc: Document
   isLocked: boolean
 }) {
+  const { currentUser } = useApp()
   const navigate = useNavigate()
   return (
     <div className={`glass-card p-5 transition-all duration-200 ${isLocked ? 'opacity-60 bg-surface-container' : 'hover:border-primary/40'}`}>
@@ -29,7 +32,7 @@ function ManagerDocCard({
         </div>
         {isLocked ? (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-surface-container-high text-on-surface-variant border border-outline-variant/40">
-            <Lock size={10} /> Locked (Pending Supervisor)
+            <Lock size={10} /> Locked (Awaiting Prior Step)
           </span>
         ) : (
           <span className="badge-pending whitespace-nowrap self-start sm:self-auto">
@@ -41,13 +44,20 @@ function ManagerDocCard({
       <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-surface-container border border-outline-variant/30 text-xs text-on-surface-variant">
         <AlertCircle size={12} className="text-primary flex-shrink-0" />
         {isLocked ? (
-          <span>Sequential signing is enforced (FR-006a). Supervisor must approve first.</span>
+          <span>Sequential signing is enforced. Prior step signatories must approve first.</span>
         ) : (
-          <span>Supervisor signature is recorded. You may now perform the final signoff.</span>
+          <span>{getSignatoryBannerText(doc, currentUser?.id)}</span>
         )}
       </div>
 
       <div className="flex gap-2">
+        <button
+          onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
+          disabled={isLocked}
+          className="btn-secondary text-xs flex-1 justify-center text-error border-error/30 hover:bg-error/5 disabled:opacity-40"
+        >
+          <XCircle size={13} /> Reject
+        </button>
         <button
           onClick={() => navigate(`/documents/${doc.id}/editor?mode=sign`)}
           disabled={isLocked}
@@ -61,11 +71,31 @@ function ManagerDocCard({
 }
 
 export default function ManagerDashboard() {
-  const { documents } = useApp()
+  const { documents, currentUser } = useApp()
   const navigate = useNavigate()
 
-  const readyDocs = documents.filter(d => d.status === 'pending_manager')
-  const lockedDocs = documents.filter(d => d.status === 'pending_supervisor')
+  const isMyTurnToSign = (doc: Document) => {
+    if (!doc.status.startsWith('pending_')) return false;
+    const sortedSigs = doc.recipients || [];
+    if (sortedSigs.length === 0) return false;
+
+    const activeOrder = sortedSigs.find(s => {
+      const sMarkers = (doc.markers || []).filter(m => m.assignedTo.id === s.id);
+      return sMarkers.length > 0 && sMarkers.some(m => !m.signed);
+    })?.order || sortedSigs[0]?.order;
+
+    const activeGroupUserIds = sortedSigs.filter(s => s.order === activeOrder).map(s => s.id);
+    const userHasUnsignedMarker = (doc.markers || []).some(m => m.assignedTo.id === currentUser?.id && !m.signed);
+
+    return activeGroupUserIds.includes(currentUser?.id || '') && userHasUnsignedMarker;
+  }
+
+  const readyDocs = documents.filter(d => isMyTurnToSign(d))
+  const lockedDocs = documents.filter(d =>
+    d.status.startsWith('pending_') &&
+    !isMyTurnToSign(d) &&
+    (d.recipients || []).some(r => r.id === currentUser?.id)
+  )
   const completedDocs = documents.filter(d => d.status === 'locked' || d.status === 'signed')
 
   return (
