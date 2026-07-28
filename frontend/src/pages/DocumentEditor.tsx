@@ -17,18 +17,7 @@ const MIN_MARKER_HEIGHT = 30
 
 function checkIsMyTurnToSign(doc?: Document, userId?: string): boolean {
   if (!userId || !doc || !doc.status || !doc.status.startsWith('pending_')) return false;
-  const sortedSigs = doc.recipients || [];
-  if (sortedSigs.length === 0) return false;
-
-  const activeOrder = sortedSigs.find(s => {
-    const sMarkers = (doc.markers || []).filter(m => m.assignedTo.id === s.id);
-    return sMarkers.length > 0 && sMarkers.some(m => !m.signed);
-  })?.order || sortedSigs[0]?.order;
-
-  const activeGroupUserIds = sortedSigs.filter(s => s.order === activeOrder).map(s => s.id);
-  const userHasUnsignedMarker = (doc.markers || []).some(m => m.assignedTo.id === userId && !m.signed);
-
-  return activeGroupUserIds.includes(userId) && userHasUnsignedMarker;
+  return (doc.markers || []).some(m => m.assignedTo?.id === userId && !m.signed);
 }
 
 export default function DocumentEditor() {
