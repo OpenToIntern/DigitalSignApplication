@@ -9,6 +9,7 @@ export interface User {
   role: string
   accessRole: 'user' | 'manager' | 'supervisor'
   external?: boolean
+  order?: number
 }
 
 export interface AuditLogEntry {

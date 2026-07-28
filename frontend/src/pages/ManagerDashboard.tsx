@@ -75,19 +75,8 @@ export default function ManagerDashboard() {
   const navigate = useNavigate()
 
   const isMyTurnToSign = (doc: Document) => {
-    if (!doc.status.startsWith('pending_')) return false;
-    const sortedSigs = doc.recipients || [];
-    if (sortedSigs.length === 0) return false;
-
-    const activeOrder = sortedSigs.find(s => {
-      const sMarkers = (doc.markers || []).filter(m => m.assignedTo.id === s.id);
-      return sMarkers.length > 0 && sMarkers.some(m => !m.signed);
-    })?.order || sortedSigs[0]?.order;
-
-    const activeGroupUserIds = sortedSigs.filter(s => s.order === activeOrder).map(s => s.id);
-    const userHasUnsignedMarker = (doc.markers || []).some(m => m.assignedTo.id === currentUser?.id && !m.signed);
-
-    return activeGroupUserIds.includes(currentUser?.id || '') && userHasUnsignedMarker;
+    if (!currentUser?.id || !doc || !doc.status || !doc.status.startsWith('pending_')) return false;
+    return (doc.markers || []).some(m => m.assignedTo?.id === currentUser?.id && !m.signed);
   }
 
   const readyDocs = documents.filter(d => isMyTurnToSign(d))

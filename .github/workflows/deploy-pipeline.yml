@@ -4,7 +4,27 @@ on:
     branches: [main, develop]
 
 jobs:
+  validate:
+    name: Typecheck & Build Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Typecheck Frontend
+        run: |
+          cd frontend
+          npm ci
+          npx tsc --noEmit
+      - name: Typecheck Backend
+        run: |
+          cd backend
+          npm ci
+          npx tsc --noEmit
+
   deploy:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - name: Set deploy path
